@@ -4,9 +4,13 @@ import ctypes
 import math
 import platform
 import re
+from contextlib import contextmanager
 from pathlib import Path
 
 import psutil
+
+from .windows_gpu import WindowsGpu
+from .windows_temperature import read_temperatures
 
 
 class SystemPowerStatus(ctypes.Structure):
@@ -89,10 +93,13 @@ def _intel_gpus(sysfs):
             continue
         if _read_text(card / "device/vendor") != "0x8086":
             continue
-        raw_frequency = _read_text(card / "gt_act_freq_mhz")
         frequency = None
-        if raw_frequency and re.fullmatch(r"[0-9]{1,10}", raw_frequency):
-            frequency = int(raw_frequency)
+        for relative in ("gt_act_freq_mhz", "gt/gt0/rps_act_freq_mhz",
+                         "device/tile0/gt0/freq0/act_freq"):
+            raw = _read_text(card / relative)
+            if raw and re.fullmatch(r"[0-9]{1,10}", raw):
+                frequency = int(raw)
+                break
         gpus.append({
             "device": card.name,
             "frequency_mhz": frequency,
@@ -100,10 +107,8 @@ def _intel_gpus(sysfs):
     return gpus or None
 
 
-def collect_status(sysfs=Path("/sys")):
-    """Return a snapshot with None for unavailable readings."""
-    system = platform.system()
-    cpu_percent = _read_sensor(psutil.cpu_percent, interval=0.2)
+def _collect_status(system, sysfs, gpu, cpu_interval, windows_temperatures):
+    cpu_percent = _read_sensor(psutil.cpu_percent, interval=cpu_interval)
     memory = _read_sensor(psutil.virtual_memory)
     ac_online = battery_percent = temperatures = intel_gpus = None
 
@@ -111,6 +116,10 @@ def collect_status(sysfs=Path("/sys")):
         power = _read_sensor(_windows_power, ctypes.windll.kernel32.GetSystemPowerStatus)
         if power is not None:
             ac_online, battery_percent = power
+        if gpu is not None:
+            intel_gpus = _read_sensor(gpu.read)
+        if windows_temperatures is not None:
+            temperatures = windows_temperatures()
     elif system == "Linux":
         ac_online, battery_percent = _linux_power(sysfs)
         temperatures = _temperatures()
@@ -127,3 +136,29 @@ def collect_status(sysfs=Path("/sys")):
         "temperatures": temperatures,
         "intel_gpus": intel_gpus,
     }
+
+
+@contextmanager
+def status_sampler(sysfs=Path("/sys"), windows_temperatures=None):
+    """Keep the GPU query open and use elapsed intervals for dashboard samples."""
+    system = platform.system()
+    gpu = _read_sensor(WindowsGpu) if system == "Windows" else None
+    first = True
+
+    def sample():
+        nonlocal first
+        interval = 0.2 if first else None
+        first = False
+        return _collect_status(system, sysfs, gpu, interval, windows_temperatures)
+
+    try:
+        yield sample
+    finally:
+        if gpu is not None:
+            gpu.close()
+
+
+def collect_status(sysfs=Path("/sys"), *, lhm=False):
+    """Return a snapshot with None for unavailable readings."""
+    with status_sampler(sysfs, read_temperatures if lhm else None) as sample:
+        return sample()
