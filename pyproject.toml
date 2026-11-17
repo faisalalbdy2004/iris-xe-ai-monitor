@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "iris-xe-ai-monitor"
+version = "0.1.0"
+description = "Read-only terminal telemetry for Windows and Linux"
+readme = "README.md"
+requires-python = ">=3.10"
+license = "MIT"
+license-files = ["LICENSE"]
+dependencies = ["psutil>=5.9"]
+
+[project.urls]
+Repository = "https://github.com/faisalalbdy2004/iris-xe-ai-monitor"
+
+[project.scripts]
+iris-monitor = "iris_monitor.__main__:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
