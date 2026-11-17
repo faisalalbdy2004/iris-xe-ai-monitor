@@ -1,10 +1,10 @@
 # Contributing to Iris Xe AI Monitor
 
-Thanks for helping build an open-source, lightweight Linux dashboard for local AI inference on Intel integrated graphics.
+Thanks for helping build an open-source Windows and Linux monitor for systems with Intel integrated graphics.
 
 ## Project status
 
-This is an experimental project in its planning stage. Hardware compatibility, GPU acceleration, and performance claims must be tested before they are presented as verified.
+The terminal monitor is an experimental prototype. Hardware compatibility, GPU acceleration, and performance claims must be tested before they are presented as verified.
 
 ## How to contribute
 
@@ -15,9 +15,14 @@ This is an experimental project in its planning stage. Hardware compatibility, G
 5. Never commit passwords, tokens, personal data, or identifiable device information.
 6. Use pull requests for proposed changes and explain what was tested.
 
+Install the project in a virtual environment using the [README](README.md) and run
+`python -m unittest discover -s tests -v` with that environment's Python.
+Add mocked readings for new sensor behavior so tests can run on hosts without the
+relevant hardware.
+
 ## Initial priorities
 
-- Linux CPU, memory, thermal, and power telemetry with graceful handling of unavailable sensors.
+- Broader Windows and Linux sensor coverage with graceful handling of unavailable readings.
 - Repeatable llama.cpp CPU, Vulkan, and SYCL benchmarks.
 - A responsive dashboard with minimal monitoring overhead.
 - Clear documentation, tests, and safe defaults.

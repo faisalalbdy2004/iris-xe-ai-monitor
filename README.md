@@ -1,52 +1,54 @@
 # Iris Xe AI Monitor
 
-# IT'S FREE FOR THE TAKING! — FREE & OPEN SOURCE
+## IT'S FREE FOR THE TAKING! — FREE & OPEN SOURCE
 
 **Free to use. Free to study. Free to modify. Free to share.**
 
-An open-source **Windows and Linux** project for monitoring and benchmarking local AI inference on Intel integrated GPUs, including Iris Xe.
+An experimental, read-only terminal monitor for Windows and Linux. Version 0.1.0 takes a snapshot of CPU, RAM, and available power, temperature, and Intel GPU readings. A desktop dashboard and local AI inference benchmarks are future goals.
 
-## Project status
+## Run from a checkout
 
-**Early development — experimental.** The application has not been implemented or validated yet. Windows and Linux are *targets*, not claims of working compatibility. GPU acceleration and sensor availability depend on drivers, hardware and OS.
+Requires Python 3.10 or later. The monitor runs as a regular user and reads OS telemetry without changing power settings, fan curves, firmware, or partitions.
 
-## Planned interfaces
+### Windows (PowerShell)
 
-- **Desktop application:** A cross-platform graphical dashboard built with Python and Qt (PySide6).
-- **Command-line interface:** A lightweight terminal tool for readings, repeatable benchmarks and machine-readable exports.
-- **Shared core:** Both interfaces will use the same Python telemetry, benchmark and result-storage modules.
-
-Planned CLI examples (not available yet):
-
-```sh
-iris-monitor status
-iris-monitor benchmark
-iris-monitor export results.json
+```powershell
+python -m venv .venv
+.\.venv\Scripts\python.exe -m pip install .
+.\.venv\Scripts\iris-monitor.exe status
+.\.venv\Scripts\iris-monitor.exe status --json
 ```
 
-## Cross-platform design
+### Linux
 
-| Area | Windows | Linux |
+```sh
+python3 -m venv .venv
+.venv/bin/python -m pip install .
+.venv/bin/iris-monitor status
+.venv/bin/iris-monitor status --json
+```
+
+With the virtual environment active, you can also run `python -m iris_monitor status`.
+
+## Readings
+
+| Reading | Windows | Linux |
 | --- | --- | --- |
-| CPU and RAM | Portable Python APIs | Portable Python APIs |
-| Temperature and GPU counters | Windows-specific sensor or Intel tooling where supported | sysfs, hwmon and Intel GPU tooling where supported |
-| AC/battery status | OS power API | Linux power_supply interfaces |
-| AI benchmarks | llama.cpp executable for Windows | llama.cpp executable for Linux |
-| GUI | PySide6 | PySide6 |
+| CPU utilization and RAM | psutil | psutil |
+| AC power and battery charge | Windows system power status API | Power supply sysfs and psutil battery data |
+| Hardware temperatures | Unavailable in this prototype | Sensors exposed through psutil |
+| Intel GPU frequency | Unavailable in this prototype | Actual clock frequency when i915 exposes `gt_act_freq_mhz` |
 
-Sensors must report **unavailable** when unsupported rather than inventing values. Platform-specific capabilities will be documented and tested independently. The monitoring app will be **read-only by default**; it will not alter fan curves, CPU power limits, firmware, or partitions.
+CPU utilization is sampled over 0.2 seconds. RAM sizes are in bytes, temperatures in Celsius, and GPU frequency in MHz. Sensor availability depends on hardware, drivers, and read permissions. GPU utilization is outside the scope of this prototype.
 
-## Project goals
+Text output shows `unavailable` for missing readings. JSON uses `null` and preserves real zeros and `false` for offline AC. On Linux, `intel_gpus` lists detected Intel DRM cards, with a `null` frequency where the driver provides none. The command succeeds when optional readings are unavailable.
 
-- Read-only monitoring of CPU, integrated GPU, memory, temperatures and power when supported.
-- Reproducible CPU, Vulkan and (when supported) SYCL local AI benchmarks.
-- Clear performance comparisons and lightweight visualization.
-- Safe defaults, documentation, automated tests and community contributions.
+## Tests and contributions
 
-## Contribute
+After installing the package, run `python -m unittest discover -s tests -v` using the virtual environment's Python. Sensor tests use mocks and temporary sysfs fixtures. GitHub Actions also installs the package and runs both CLI formats on Windows and Linux.
 
-Ideas, bug reports, benchmarks and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
+See [CONTRIBUTING.md](CONTRIBUTING.md) for the contribution process.
 
 ## License
 
-Released under the [MIT License](LICENSE). You may use, modify, redistribute and sell copies under MIT license terms, including retaining required copyright and license notices. **Free to take doesn't mean the license has no conditions.**
+Released under the [MIT License](LICENSE). Keep the copyright and license notices when redistributing the project.
