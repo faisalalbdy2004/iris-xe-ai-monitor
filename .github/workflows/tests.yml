@@ -23,3 +23,11 @@ jobs:
       - run: iris-monitor status
       - run: iris-monitor status --json | python -m json.tool
       - run: iris-monitor watch --interval 0.5 --count 2
+      - name: Exercise Linux terminal redraw and Ctrl+C
+        if: runner.os == 'Linux' && matrix.python == '3.14'
+        shell: bash
+        run: |
+          log=$(mktemp)
+          (sleep 3; printf '\003') | timeout 15s script -qefc 'exec iris-monitor watch --interval 1' "$log"
+          test "$(grep -ac 'CPU utilization:' "$log")" -ge 2
+          grep -aqF $'\033[?25h\033[?1049l' "$log"

@@ -6,6 +6,7 @@ import sys
 import time
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
+from itertools import islice
 
 
 @contextmanager
@@ -70,7 +71,9 @@ def watch(sample, render, interval, count, stream):
                 lines = render(sample())
                 if redraw:
                     columns, rows = shutil.get_terminal_size()
-                    lines = [line[:max(1, columns - 1)] for line in lines[:max(1, rows - 1)]]
+                    width = max(1, columns - 1)
+                    height = max(1, rows - 1)
+                    lines = (line[:width] for line in islice(lines, height))
                     stream.write("\x1b[H\x1b[J")
                 stream.write("\n".join(lines) + ("\n" if redraw else "\n\n"))
                 stream.flush()

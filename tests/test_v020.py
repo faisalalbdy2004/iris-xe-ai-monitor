@@ -173,6 +173,20 @@ class DashboardTests(unittest.TestCase):
         sleep.assert_called_once()
         self.assertEqual(output.getvalue(), "first\n\nsecond\n\n")
 
+    def test_redraw_clips_generator_lines_to_terminal_size(self):
+        output = io.StringIO()
+        sample = Mock(return_value=["first line", "second line", "hidden"])
+        with (
+            patch.object(dashboard, "_ansi_output") as ansi,
+            patch.object(dashboard.shutil, "get_terminal_size", return_value=(7, 3)),
+        ):
+            ansi.return_value.__enter__.return_value = True
+            dashboard.watch(sample, lambda frame: (line for line in frame), 1, 1, output)
+        self.assertEqual(
+            output.getvalue(), "\x1b[?1049h\x1b[?25l\x1b[H\x1b[J"
+            "first \nsecond\n\x1b[?25h\x1b[?1049l",
+        )
+
     def test_interrupt_restores_terminal(self):
         output = io.StringIO()
         with (
