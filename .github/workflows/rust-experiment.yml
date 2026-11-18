@@ -77,6 +77,8 @@ jobs:
             python rust-monitor/gui_benchmark.py --rust-monitor rust-monitor/target/gui/release/iris-monitor-rs --seconds 6 > rust-monitor/gui-result.json
             cat rust-monitor/gui-result.json
             python -c "import json; assert json.load(open(\"rust-monitor/gui-result.json\"))[\"clean_window_close\"]"
+            python rust-monitor/gui_benchmark.py --profile --rust-monitor rust-monitor/target/gui/release/iris-monitor-rs --seconds 6 > rust-monitor/gui-profile.json
+            python -c "import json; phases=json.load(open(\"rust-monitor/gui-profile.json\"))[\"phases\"]; assert phases[\"active\"][\"frame_profile\"][\"updates\"] > 0"
           '
       - uses: actions/upload-artifact@v4
         with:
@@ -87,3 +89,4 @@ jobs:
             !rust-monitor/target/gui/release/*.d
             !rust-monitor/target/gui/release/*.pdb
             rust-monitor/gui-result.json
+            rust-monitor/gui-profile.json

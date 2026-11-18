@@ -45,8 +45,14 @@ impl History {
     }
 
     fn line(&self, ui: &mut egui::Ui, color: Color32) {
+        if !self.0.iter().any(Option::is_some) {
+            return;
+        }
         let (response, painter) =
             ui.allocate_painter(Vec2::new(ui.available_width(), 62.0), egui::Sense::hover());
+        if !ui.is_rect_visible(response.rect) {
+            return;
+        }
         let rect = response.rect.shrink(2.0);
         let grid = Stroke::new(1.0_f32, ui.visuals().widgets.noninteractive.bg_stroke.color);
         for ratio in [0.0, 0.5, 1.0] {
@@ -84,6 +90,7 @@ struct Dashboard {
     gpu: History,
     gpu_device: Option<String>,
     trace: Option<[u64; 2]>,
+    profile: bool,
 }
 
 impl Drop for Dashboard {
@@ -153,6 +160,7 @@ pub fn run() -> eframe::Result {
                 gpu: History::default(),
                 gpu_device: None,
                 trace: std::env::var_os("COREPULSE_GUI_TRACE").map(|_| [0, 0]),
+                profile: std::env::var_os("COREPULSE_GUI_PROFILE").is_some(),
             }))
         }),
     )
@@ -176,11 +184,19 @@ fn value(ui: &mut egui::Ui, name: &str, reading: Option<f64>, caption: &str) {
         RichText::new(reading.map_or_else(|| "Unavailable".into(), |v| format!("{v:.1}%")))
             .size(26.0),
     );
-    ui.weak(caption);
+    ui.label(caption);
 }
 
 impl eframe::App for Dashboard {
-    fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+    fn update(&mut self, ctx: &egui::Context, frame: &mut eframe::Frame) {
+        if self.profile {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_nanos();
+            let previous_us = frame.info().cpu_usage.map_or(-1.0, |seconds| seconds * 1e6);
+            eprintln!("COREPULSE_FRAME {now} {previous_us:.1}");
+        }
         if let Some([updates, _]) = &mut self.trace {
             *updates += 1;
         }

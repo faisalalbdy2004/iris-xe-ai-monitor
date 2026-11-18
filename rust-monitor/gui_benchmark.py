@@ -3,10 +3,12 @@
 import argparse
 import ctypes as ct
 import json
+import os
 import re
 import statistics
 import subprocess
 import sys
+import tempfile
 import time
 from collections import defaultdict
 
@@ -131,6 +133,7 @@ def measure(root, window, state, seconds):
     gpu = []
     window.utilization()  # Prime the reference at the phase boundary.
     started = time.monotonic()
+    wall_start = time.time_ns()
     next_read = started + 0.5
     index = 0
     while time.monotonic() < started + seconds:
@@ -150,6 +153,7 @@ def measure(root, window, state, seconds):
     last_cpu, resident = process_totals(root)
     elapsed = time.monotonic() - started
     return {
+        "_window": (wall_start, time.time_ns()),
         "cpu_percent_of_one_core": round(100 * (last_cpu - first_cpu) / elapsed, 4),
         "median_rss_mib": round(statistics.median([*rss, resident]) / 2**20, 2),
         "gpu_busiest_engine_median_percent": round(statistics.median(gpu), 4) if gpu else None,
@@ -157,9 +161,25 @@ def measure(root, window, state, seconds):
     }
 
 
-def run(binary, seconds):
+def frame_profile(lines, start, end):
+    durations = []
+    updates = 0
+    for line in lines:
+        if not line.startswith("COREPULSE_FRAME "):
+            continue
+        _, timestamp, previous_us = line.split()
+        if start <= int(timestamp) < end:
+            updates += 1
+            if float(previous_us) >= 0:
+                durations.append(float(previous_us))
+    return {"updates": updates, "previous_frame_median_us":
+            statistics.median(durations) if durations else None}
+
+
+def run(binary, seconds, trace=None):
     started = time.monotonic()
-    proc = subprocess.Popen([binary, "gui"])
+    env = {**os.environ, "COREPULSE_GUI_PROFILE": "1"} if trace else None
+    proc = subprocess.Popen([binary, "gui"], env=env, stderr=trace)
     window = None
     graceful = None
     try:
@@ -195,6 +215,13 @@ def run(binary, seconds):
             proc.terminate()
             proc.wait(timeout=5)
             graceful = False
+    if trace:
+        trace.seek(0)
+        lines = trace.read().splitlines()
+    for phase in results.values():
+        start, end = phase.pop("_window")
+        if trace:
+            phase["frame_profile"] = frame_profile(lines, start, end)
     return {"time_to_visible_ms": startup, "seconds_per_phase": seconds, "phases": results,
             "window_restored": True, "clean_window_close": graceful}
 
@@ -203,10 +230,16 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--rust-monitor", required=True)
     parser.add_argument("--seconds", type=float, default=10)
+    parser.add_argument("--profile", action="store_true", help="record eframe update counts and CPU timing")
     args = parser.parse_args()
     if not 5 <= args.seconds <= 60:
         parser.error("choose 5–60 seconds per phase")
-    print(json.dumps(run(args.rust_monitor, args.seconds), indent=2, allow_nan=False))
+    if args.profile:
+        with tempfile.TemporaryFile(mode="w+t", encoding="utf-8") as trace:
+            result = run(args.rust_monitor, args.seconds, trace)
+    else:
+        result = run(args.rust_monitor, args.seconds)
+    print(json.dumps(result, indent=2, allow_nan=False))
 
 
 if __name__ == "__main__":

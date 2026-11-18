@@ -4,6 +4,8 @@ Development continues on `experiment/rust-native` in [draft PR #6](https://githu
 
 ## Latest verified code
 
+Phase 3 adds per-phase eframe profiling, skips rendering absent and clipped graphs, and extends reference checks to RAM, battery, AC, and temperature availability. Cross-platform CI and benchmark verification are pending for the implementation checkpoint. [Arch and Hyprland validation plan](ARCH_HYPRLAND.md)
+
 - `ed351c36bfb24b78d00344ed93848cbdacac2f6d` moved telemetry deadlines from UI repaint timers to the existing sampler worker. New samples request redraws. Each chart emits one path per contiguous run of readings. Missing data remains a gap.
 - `6002c97b4e772de0f61a9be062903c5050c032bc` clarified the stroke width types and passed formatting and Clippy without warnings. Windows passed 6 headless and 8 GUI tests. Ubuntu passed 7 headless and 9 GUI tests. Both GUI benchmark hosts restored and closed the window. [Rust CI](https://github.com/faisalalbdy2004/iris-xe-ai-monitor/actions/runs/44213859019) · [Python CI](https://github.com/faisalalbdy2004/iris-xe-ai-monitor/actions/runs/44213859301)
 - Dark and light themes, responsive layouts, bounded histories, and minimized pause are available. The headless CLI remains independent of the renderer.

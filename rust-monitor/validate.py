@@ -78,11 +78,20 @@ def run(binary, interval, count):
                 previous = arrival
                 continue
             data = json.loads(line)
+            memory = psutil.virtual_memory()
+            read_battery = getattr(psutil, "sensors_battery", None)
+            battery = read_battery() if read_battery else None
+            read_temperatures = getattr(psutil, "sensors_temperatures", None)
+            temperatures = read_temperatures() if read_temperatures else {}
             frames.append({
                 "elapsed_seconds": round(arrival - started, 3),
                 "interval_seconds": round(arrival - previous, 3),
                 "rust_cpu_percent": data["cpu_percent"],
                 "psutil_cpu_percent": psutil_time,
+                "ram_percent": [data["ram_percent"], memory.percent],
+                "battery_percent": [data["battery_percent"], battery.percent if battery else None],
+                "ac_online": [data["ac_online"], battery.power_plugged if battery else None],
+                "temperature_available": [bool(data["temperatures"]), bool(temperatures)],
                 **counter_values,
                 "gpus": [
                     {"device": card["device"], "name": card.get("name"),
@@ -132,6 +141,11 @@ def main():
         (gpu["rust_busiest_engine"], gpu["pdh_busiest_engine"])
         for frame in frames for gpu in frame["gpus"]
     )
+    for name in ("ram_percent", "battery_percent"):
+        summaries[name] = compare(frame[name] for frame in frames)
+    for name in ("ac_online", "temperature_available"):
+        pairs = [(a, b) for a, b in (frame[name] for frame in frames) if a is not None and b is not None]
+        summaries[name] = {"pairs": len(pairs), "agreements": sum(a == b for a, b in pairs)}
     print(json.dumps({"summary": summaries, "frames": frames}, indent=2, allow_nan=False))
 
 
