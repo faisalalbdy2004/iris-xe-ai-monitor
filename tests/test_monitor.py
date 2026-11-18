@@ -102,6 +102,17 @@ class TelemetryTests(unittest.TestCase):
         self.assertIsNone(snapshot["temperatures"])
         self.assertEqual(snapshot["ram_percent"], 25)
 
+    def test_linux_supports_per_gt_i915_and_xe_frequency_paths(self):
+        for card in ("card0", "card1"):
+            self.write_sensor(f"class/drm/{card}/device/vendor", "0x8086")
+        self.write_sensor("class/drm/card0/gt_act_freq_mhz", "bad")
+        self.write_sensor("class/drm/card0/gt/gt0/rps_act_freq_mhz", "350")
+        self.write_sensor("class/drm/card1/device/tile0/gt0/freq0/act_freq", "0")
+        self.assertEqual(self.linux_snapshot()["intel_gpus"], [
+            {"device": "card0", "frequency_mhz": 350},
+            {"device": "card1", "frequency_mhz": 0},
+        ])
+
     def windows_snapshot(self, ac, flag, percent, success=1):
         def get_status(pointer):
             status = ctypes.cast(pointer, ctypes.POINTER(telemetry.SystemPowerStatus)).contents
@@ -114,6 +125,7 @@ class TelemetryTests(unittest.TestCase):
         with (
             patch.object(telemetry.platform, "system", return_value="Windows"),
             patch.object(telemetry.ctypes, "windll", windll, create=True),
+            patch.object(telemetry, "WindowsGpu", side_effect=OSError),
         ):
             return telemetry.collect_status(self.sysfs)
 
