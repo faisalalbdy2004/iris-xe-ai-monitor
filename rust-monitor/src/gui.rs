@@ -1,7 +1,7 @@
 use crate::telemetry::{Sampler, Snapshot};
 use eframe::egui::{self, Color32, RichText, Stroke, Theme, Vec2};
 use std::collections::VecDeque;
-use std::sync::mpsc::{self, Receiver, SyncSender};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender};
 use std::time::{Duration, Instant};
 
 const HISTORY: usize = 60;
@@ -53,34 +53,51 @@ impl History {
             let y = egui::lerp(rect.y_range(), ratio);
             painter.hline(rect.x_range(), y, grid);
         }
-        let mut previous = None;
+        let mut segment = Vec::with_capacity(self.0.len());
+        let stroke = Stroke::new(2.0, color);
         for (index, value) in self.0.iter().enumerate() {
             let x = egui::lerp(
                 rect.x_range(),
                 (HISTORY - self.0.len() + index) as f32 / (HISTORY - 1) as f32,
             );
-            let point = value.map(|v| egui::pos2(x, rect.bottom() - rect.height() * v / 100.0));
-            if let (Some(a), Some(b)) = (previous, point) {
-                painter.line_segment([a, b], Stroke::new(2.0, color));
+            if let Some(v) = value {
+                segment.push(egui::pos2(x, rect.bottom() - rect.height() * v / 100.0));
+            } else if segment.len() > 1 {
+                painter.add(egui::Shape::line(std::mem::take(&mut segment), stroke));
+            } else {
+                segment.clear();
             }
-            previous = point;
+        }
+        if segment.len() > 1 {
+            painter.add(egui::Shape::line(segment, stroke));
         }
     }
 }
 
 struct Dashboard {
     readings: Receiver<Snapshot>,
-    requests: SyncSender<()>,
-    pending: bool,
+    requests: SyncSender<Option<Instant>>,
+    scheduled: Option<Cadence>,
     last_poll: Option<Instant>,
     latest: Option<Snapshot>,
     cpu: History,
     gpu: History,
     gpu_device: Option<String>,
+    trace: Option<[u64; 2]>,
+}
+
+impl Drop for Dashboard {
+    fn drop(&mut self) {
+        if let Some([updates, samples]) = self.trace {
+            eprintln!("CorePulse GUI trace: {updates} updates, {samples} snapshots");
+        }
+    }
 }
 
 pub fn run() -> eframe::Result {
     let options = eframe::NativeOptions {
+        vsync: std::env::var_os("COREPULSE_GUI_VSYNC").as_deref()
+            != Some(std::ffi::OsStr::new("0")),
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([820.0, 610.0])
             .with_min_inner_size([360.0, 400.0]),
@@ -100,31 +117,42 @@ pub fn run() -> eframe::Result {
 
             let context = app.egui_ctx.clone();
             let (sender, readings) = mpsc::sync_channel(1);
-            let (requests, receiver) = mpsc::sync_channel(1);
+            let (requests, receiver) = mpsc::sync_channel::<Option<Instant>>(1);
             std::thread::spawn(move || {
-                if receiver.recv().is_err() {
-                    return;
-                }
-                let mut sampler = Sampler::new();
+                let mut sampler = None;
+                let mut deadline: Option<Instant> = None;
                 loop {
-                    if sender.send(sampler.sample()).is_err() {
+                    let command = match deadline {
+                        Some(at) => {
+                            receiver.recv_timeout(at.saturating_duration_since(Instant::now()))
+                        }
+                        None => receiver.recv().map_err(|_| RecvTimeoutError::Disconnected),
+                    };
+                    match command {
+                        Ok(next) => {
+                            deadline = next;
+                            continue;
+                        }
+                        Err(RecvTimeoutError::Disconnected) => break,
+                        Err(RecvTimeoutError::Timeout) => deadline = None,
+                    }
+                    let reading = sampler.get_or_insert_with(Sampler::new).sample();
+                    if sender.send(reading).is_err() {
                         break;
                     }
                     context.request_repaint();
-                    if receiver.recv().is_err() {
-                        break;
-                    }
                 }
             });
             Ok(Box::new(Dashboard {
                 readings,
                 requests,
-                pending: false,
+                scheduled: None,
                 last_poll: None,
                 latest: None,
                 cpu: History::default(),
                 gpu: History::default(),
                 gpu_device: None,
+                trace: std::env::var_os("COREPULSE_GUI_TRACE").map(|_| [0, 0]),
             }))
         }),
     )
@@ -153,12 +181,19 @@ fn value(ui: &mut egui::Ui, name: &str, reading: Option<f64>, caption: &str) {
 
 impl eframe::App for Dashboard {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if let Some([updates, _]) = &mut self.trace {
+            *updates += 1;
+        }
         let cadence = ctx.input(|input| {
             let viewport = input.viewport();
             Cadence::from_window(viewport.minimized, viewport.focused)
         });
         if let Ok(snapshot) = self.readings.try_recv() {
-            self.pending = false;
+            self.scheduled = None;
+            self.last_poll = Some(Instant::now());
+            if let Some([_, samples]) = &mut self.trace {
+                *samples += 1;
+            }
             let gpu = snapshot.intel_gpus.as_ref().and_then(|cards| cards.first());
             let device = gpu.map(|card| card.device.as_str());
             if device != self.gpu_device.as_deref() {
@@ -170,24 +205,20 @@ impl eframe::App for Dashboard {
                 .push(gpu.and_then(|card| card.utilization_percent.flatten()));
             self.latest = Some(snapshot);
         }
-        // An OS restore event resumes sampling. A minimized window schedules
-        // neither telemetry work nor a timer-driven repaint.
+        // Timeout work lives on the sampler thread. Idle UI frames are only
+        // requested after new readings. A paused mode cancels the next poll.
+        if self.scheduled != Some(cadence) {
+            let deadline = cadence.period().map(|period| {
+                self.last_poll
+                    .map_or_else(Instant::now, |last| last + period)
+            });
+            if self.requests.try_send(deadline).is_ok() {
+                self.scheduled = Some(cadence);
+            }
+        }
         let Some(period) = cadence.period() else {
             return;
         };
-        if !self.pending {
-            let delay = self
-                .last_poll
-                .map_or(Duration::ZERO, |last| period.saturating_sub(last.elapsed()));
-            if delay.is_zero() {
-                if self.requests.try_send(()).is_ok() {
-                    self.last_poll = Some(Instant::now());
-                    self.pending = true;
-                }
-            } else {
-                ctx.request_repaint_after(delay);
-            }
-        }
 
         egui::CentralPanel::default().show(ctx, |ui| {
             egui::ScrollArea::vertical().show(ui, |ui| {
