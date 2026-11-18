@@ -37,7 +37,7 @@ fn intel_adapters() -> Vec<Adapter> {
 }
 
 fn instance(name: &str) -> Option<(Luid, u32, u32)> {
-    let mut fields = name.splitn(10, '_');
+    let mut fields = name.splitn(11, '_');
     fn field<'a>(fields: &mut impl Iterator<Item = &'a str>, key: &str) -> Option<&'a str> {
         (fields.next()? == key).then_some(())?;
         fields.next()
