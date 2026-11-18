@@ -1,52 +1,91 @@
-# Iris Xe AI Monitor
+<div align="center">
 
-# IT'S FREE FOR THE TAKING! — FREE & OPEN SOURCE
+# ⚡ CorePulse
 
-**Free to use. Free to study. Free to modify. Free to share.**
+### IT'S FREE FOR THE TAKING! — FREE & OPEN SOURCE
 
-An open-source **Windows and Linux** project for monitoring and benchmarking local AI inference on Intel integrated GPUs, including Iris Xe.
+**A lightweight, cross-platform hardware monitor for Windows and Linux.**
 
-## Project status
+*Know your hardware. Keep your resources.*
 
-**Early development — experimental.** The application has not been implemented or validated yet. Windows and Linux are *targets*, not claims of working compatibility. GPU acceleration and sensor availability depend on drivers, hardware and OS.
+**CPU · GPU · Memory · Battery · Sensors · Live charts**
 
-## Planned interfaces
+</div>
 
-- **Desktop application:** A cross-platform graphical dashboard built with Python and Qt (PySide6).
-- **Command-line interface:** A lightweight terminal tool for readings, repeatable benchmarks and machine-readable exports.
-- **Shared core:** Both interfaces will use the same Python telemetry, benchmark and result-storage modules.
+---
 
-Planned CLI examples (not available yet):
+> **Development preview — not a stable release.** CorePulse is the working product name for this project, which is still hosted in the `iris-xe-ai-monitor` repository. Hardware support and performance vary by system; see the status below.
 
-```sh
-iris-monitor status
-iris-monitor benchmark
-iris-monitor export results.json
-```
+## Why CorePulse?
 
-## Cross-platform design
+A monitor shouldn't become the workload. CorePulse aims to show useful system information with **minimal CPU, RAM, and GPU overhead**, clear reporting, and no unnecessary background services.
 
-| Area | Windows | Linux |
+- 🪶 **Lightweight by design** — benchmark the monitor's own resource consumption.
+- 🖥️ **Windows + Linux** — platform-specific sensor adapters with shared interfaces.
+- 📊 **Desktop + terminal** — graphical dashboard and script-friendly CLI.
+- 🔍 **Honest measurements** — unsupported readings say **unavailable**, never invented values.
+- 🔓 **Open source** — free to use, inspect, modify, and contribute under the MIT license.
+
+## Current development status
+
+The stable default branch is **not yet a finished downloadable application**. Development and experiments are tracked in pull requests:
+
+| Track | State | Details |
 | --- | --- | --- |
-| CPU and RAM | Portable Python APIs | Portable Python APIs |
-| Temperature and GPU counters | Windows-specific sensor or Intel tooling where supported | sysfs, hwmon and Intel GPU tooling where supported |
-| AC/battery status | OS power API | Linux power_supply interfaces |
-| AI benchmarks | llama.cpp executable for Windows | llama.cpp executable for Linux |
-| GUI | PySide6 | PySide6 |
+| Python terminal monitor | Working prototype under review | [PR #2](https://github.com/faisalalbdy2004/iris-xe-ai-monitor/pull/2) |
+| Python live dashboard and Intel GPU sensors | Experimental; tested on one Windows 11 / Iris Xe laptop | [PR #4](https://github.com/faisalalbdy2004/iris-xe-ai-monitor/pull/4) |
+| Rust CLI and graphical dashboard | Experimental Rust work; performance and sensor validation ongoing | [Draft PR #6](https://github.com/faisalalbdy2004/iris-xe-ai-monitor/pull/6) |
 
-Sensors must report **unavailable** when unsupported rather than inventing values. Platform-specific capabilities will be documented and tested independently. The monitoring app will be **read-only by default**; it will not alter fan curves, CPU power limits, firmware, or partitions.
+The Rust prototype is being evaluated for its startup time, memory use, monitoring accuracy, and GUI overhead. **No universal hardware compatibility or performance guarantee is implied.**
 
-## Project goals
+## Planned hardware support
 
-- Read-only monitoring of CPU, integrated GPU, memory, temperatures and power when supported.
-- Reproducible CPU, Vulkan and (when supported) SYCL local AI benchmarks.
-- Clear performance comparisons and lightweight visualization.
-- Safe defaults, documentation, automated tests and community contributions.
+| Hardware | Direction |
+| --- | --- |
+| Intel CPU and Iris Xe GPU | Initial implementation and testing focus |
+| AMD CPU and GPU | Future adapter support, not yet validated |
+| NVIDIA GPU | Future adapter support, not yet validated |
+| Battery, power, memory, temperature | Availability depends on operating system and sensor provider |
 
-## Contribute
+CorePulse aims to be universal **over time**, not to advertise hardware support before it has been verified.
 
-Ideas, bug reports, benchmarks and pull requests are welcome. See [CONTRIBUTING.md](CONTRIBUTING.md).
+## Design principles
+
+1. **Performance first:** bounded history, efficient refresh scheduling, and no busy loops.
+2. **Accuracy before aesthetics:** compare measurements with trustworthy OS counters.
+3. **Native where practical:** Rust is under evaluation for the final application.
+4. **Safe by default:** read-only monitoring; no fan, firmware, power-limit, or disk changes.
+5. **Graceful degradation:** missing permissions, drivers, and sensor data should not crash the app.
+6. **Community-driven:** reproducible reports and focused contributions are welcome.
+
+## Roadmap
+
+- [x] Prototype Python CLI and validate basic Windows hardware readings
+- [x] Prototype Intel Iris Xe activity monitoring and live terminal display
+- [x] Begin experimental Rust CLI and desktop GUI development
+- [ ] Complete cross-platform accuracy and overhead validation
+- [ ] Reduce Rust GUI idle CPU and GPU overhead
+- [ ] Provide tested Windows and Linux releases
+- [ ] Expand verified AMD and NVIDIA sensor support
+
+Checked items refer to **prototype milestones**, not to features already released from `main`.
+
+## Try it and contribute
+
+For the latest experimental source and testing instructions, see the pull requests linked above. These branches may change and are intended for testing, not production deployment.
+
+Have compatible hardware or a sensor report to share? [Open an issue](https://github.com/faisalalbdy2004/iris-xe-ai-monitor/issues) or read [CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## License
 
-Released under the [MIT License](LICENSE). You may use, modify, redistribute and sell copies under MIT license terms, including retaining required copyright and license notices. **Free to take doesn't mean the license has no conditions.**
+**MIT** — [read the license](LICENSE). You may use, modify and redistribute this code, including commercially, subject to preserving the required copyright and license notices.
+
+---
+
+<div align="center">
+
+### IT'S FREE FOR THE TAKING! ❤️
+
+**Built in the open. Made to run light.**
+
+</div>
