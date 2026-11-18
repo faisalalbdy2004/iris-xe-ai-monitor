@@ -1,0 +1,92 @@
+name: Rust experiment
+
+on:
+  pull_request:
+    paths:
+      - rust-monitor/**
+      - .github/workflows/rust-experiment.yml
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-measure:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    env:
+      CARGO_TERM_COLOR: never
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - run: python -m pip install .
+      - working-directory: rust-monitor
+        run: cargo fmt --check
+      - working-directory: rust-monitor
+        run: cargo test --locked
+      - working-directory: rust-monitor
+        run: cargo build --release --locked
+      - name: Exercise CLI and measure against Python
+        shell: pwsh
+        run: |
+          $name = if ($IsWindows) { "iris-monitor-rs.exe" } else { "iris-monitor-rs" }
+          $binary = (Resolve-Path "rust-monitor/target/release/$name").Path
+          & $binary status --json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $binary watch --interval 0.5 --count 2
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python rust-monitor/validate.py --rust-monitor "$binary" --count 8 | Tee-Object -FilePath "rust-monitor/validation-result.json"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $pythonMonitor = (Get-Command iris-monitor).Source
+          python rust-monitor/benchmark.py --python-monitor "$pythonMonitor" --rust-monitor "$binary" --repeats 10 --watch-seconds 10 | Tee-Object -FilePath "rust-monitor/benchmark-result.json"
+          exit $LASTEXITCODE
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rust-cli-${{ matrix.os }}
+          path: |
+            rust-monitor/target/release/iris-monitor-rs*
+            !rust-monitor/target/release/*.d
+            !rust-monitor/target/release/*.pdb
+            rust-monitor/Cargo.lock
+            rust-monitor/benchmark-result.json
+            rust-monitor/validation-result.json
+      - working-directory: rust-monitor
+        run: cargo test --features gui --locked --release --target-dir target/gui
+      - working-directory: rust-monitor
+        run: cargo clippy --locked --all-targets --all-features --release --target-dir target/gui
+      - working-directory: rust-monitor
+        run: cargo build --features gui --locked --release --target-dir target/gui
+      - name: Install virtual display runtime dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y libxkbcommon-x11-0 libgl1-mesa-dri libegl1 x11-utils xvfb xdotool openbox
+      - name: Benchmark the Linux GUI on a virtual display
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a bash -e -c '
+            openbox &
+            wm=$!
+            trap "kill $wm 2>/dev/null || true" EXIT
+            python rust-monitor/gui_benchmark.py --rust-monitor rust-monitor/target/gui/release/iris-monitor-rs --seconds 6 > rust-monitor/gui-result.json
+            cat rust-monitor/gui-result.json
+            python -c "import json; assert json.load(open(\"rust-monitor/gui-result.json\"))[\"clean_window_close\"]"
+            python rust-monitor/gui_benchmark.py --profile --rust-monitor rust-monitor/target/gui/release/iris-monitor-rs --seconds 6 > rust-monitor/gui-profile.json
+            python -c "import json; phases=json.load(open(\"rust-monitor/gui-profile.json\"))[\"phases\"]; assert phases[\"active\"][\"frame_profile\"][\"updates\"] > 0"
+          '
+      - uses: actions/upload-artifact@v4
+        with:
+          name: corepulse-gui-${{ matrix.os }}
+          path: |
+            LICENSE
+            rust-monitor/target/gui/release/iris-monitor-rs*
+            !rust-monitor/target/gui/release/*.d
+            !rust-monitor/target/gui/release/*.pdb
+            rust-monitor/gui-result.json
+            rust-monitor/gui-profile.json
