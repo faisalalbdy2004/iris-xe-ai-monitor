@@ -4,9 +4,10 @@ import ctypes
 import shutil
 import sys
 import time
-from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from itertools import islice
+from queue import Empty, SimpleQueue
+from threading import Thread
 
 
 @contextmanager
@@ -41,23 +42,42 @@ def temperature_sampler(read):
         yield None
         return
 
-    with ThreadPoolExecutor(max_workers=1) as executor:
-        pending = None
-        last_reading = None
-        next_poll = 0.0
+    results = SimpleQueue()
+    pending = None
+    last_reading = None
+    next_poll = 0.0
+    closed = False
 
-        def sample():
-            nonlocal pending, last_reading, next_poll
-            now = time.monotonic()
-            if pending is not None and pending.done():
-                last_reading = pending.result()
-                pending = None
-            if pending is None and now >= next_poll:
-                pending = executor.submit(read)
-                next_poll = now + 10
-            return last_reading
+    def poll():
+        try:
+            reading = read()
+        except Exception:
+            reading = None
+        results.put(reading)
 
+    def sample():
+        nonlocal pending, last_reading, next_poll
+        if closed:
+            return None
+        now = time.monotonic()
+        if pending is not None and not pending.is_alive():
+            try:
+                last_reading = results.get_nowait()
+            except Empty:
+                last_reading = None
+            pending = None
+        if pending is None and now >= next_poll:
+            # A blocked provider cannot be cancelled safely. Keep one daemon
+            # poll in flight and leave it alone when the dashboard exits.
+            pending = Thread(target=poll, daemon=True)
+            pending.start()
+            next_poll = now + 10
+        return last_reading
+
+    try:
         yield sample
+    finally:
+        closed = True
 
 
 def watch(sample, render, interval, count, stream):

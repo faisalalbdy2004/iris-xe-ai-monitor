@@ -3,6 +3,7 @@ import io
 import json
 import platform
 import subprocess
+import sys
 import unittest
 from contextlib import redirect_stdout
 from types import SimpleNamespace
@@ -165,6 +166,53 @@ class WindowsTemperatureTests(unittest.TestCase):
 
 
 class DashboardTests(unittest.TestCase):
+    def test_temperature_failure_clears_previous_reading_and_allows_retry(self):
+        read = Mock(side_effect=[["reading"], RuntimeError("provider failed"), ["recovered"]])
+
+        def run_immediately(*, target, daemon):
+            return SimpleNamespace(start=target, is_alive=lambda: False)
+
+        with (
+            patch.object(dashboard, "Thread", side_effect=run_immediately),
+            patch.object(dashboard.time, "monotonic", side_effect=[0, 1, 10, 11, 20, 21]),
+            dashboard.temperature_sampler(read) as sample,
+        ):
+            self.assertIsNone(sample())
+            self.assertEqual(sample(), ["reading"])
+            self.assertEqual(sample(), ["reading"])
+            self.assertIsNone(sample())
+            self.assertIsNone(sample())
+            self.assertEqual(sample(), ["recovered"])
+
+    def test_stuck_temperature_provider_does_not_keep_process_alive(self):
+        script = """
+from threading import Event
+from unittest.mock import patch
+from iris_monitor.dashboard import temperature_sampler
+
+started = Event()
+blocked = Event()
+calls = []
+
+def read():
+    calls.append(1)
+    started.set()
+    blocked.wait()
+
+with patch("iris_monitor.dashboard.time.monotonic", side_effect=[0, 100]):
+    with temperature_sampler(read) as sample:
+        assert sample() is None
+        assert started.wait(2)
+        assert sample() is None
+        assert calls == [1]
+print("sampler exited", flush=True)
+"""
+        result = subprocess.run(
+            [sys.executable, "-c", script], capture_output=True, text=True, timeout=8,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), "sampler exited")
+
     def test_redirected_output_has_plain_frames_and_honors_count(self):
         output = io.StringIO()
         sample = Mock(side_effect=["first", "second"])
