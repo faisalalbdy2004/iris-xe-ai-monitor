@@ -1,5 +1,6 @@
-use crate::telemetry::{nonempty, Gpu, Temperature};
+use crate::telemetry::{nonempty, CpuTimes, Gpu, Temperature};
 use std::fs;
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
 pub struct Sensors {
@@ -21,11 +22,39 @@ fn files(path: &Path) -> Vec<PathBuf> {
     paths
 }
 
+fn cpu_times(line: &str) -> Option<CpuTimes> {
+    let mut values = line.split_whitespace();
+    if values.next()? != "cpu" {
+        return None;
+    }
+    let mut count = [0_u64; 8];
+    for field in &mut count {
+        *field = values.next()?.parse().ok()?;
+    }
+    // Guest time is already included in user/nice. I/O wait is idle time.
+    let [user, nice, system, idle, iowait, irq, softirq, steal] = count;
+    let busy = [user, nice, system, irq, softirq, steal]
+        .into_iter()
+        .try_fold(0_u64, u64::checked_add)?;
+    Some(CpuTimes {
+        busy,
+        idle: idle.checked_add(iowait)?,
+    })
+}
+
 impl Sensors {
     pub fn new() -> Self {
         Self {
             root: "/sys/class".into(),
         }
+    }
+
+    pub fn cpu_times(&self) -> Option<CpuTimes> {
+        let mut line = String::new();
+        BufReader::new(fs::File::open("/proc/stat").ok()?)
+            .read_line(&mut line)
+            .ok()?;
+        cpu_times(&line)
     }
 
     pub fn power(&self) -> (Option<bool>, Option<f64>) {
@@ -123,6 +152,15 @@ impl Sensors {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn aggregate_cpu_ignores_guest_duplicates_and_accepts_only_complete_rows() {
+        let times = cpu_times("cpu 10 2 5 100 7 3 4 1 6 1").unwrap();
+        assert_eq!(times.busy, 25);
+        assert_eq!(times.idle, 107);
+        assert!(cpu_times("cpu0 10 2 5 100 7 3 4 1").is_none());
+        assert!(cpu_times("cpu 10 2").is_none());
+    }
 
     #[test]
     fn reads_supported_sysfs_values_and_keeps_missing_values_unknown() {

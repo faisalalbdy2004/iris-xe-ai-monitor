@@ -26,7 +26,7 @@ implementation. Its X11 backend also uses libxkbcommon-x11.
 
 | Reading | Windows | Linux |
 | --- | --- | --- |
-| CPU and RAM | sysinfo OS counters | sysinfo OS counters |
+| CPU and RAM | GetSystemTimes and sysinfo RAM counters | /proc/stat and sysinfo RAM counters |
 | AC and battery | GetSystemPowerStatus | sysfs power supply state and battery capacity |
 | Intel GPU | DXGI adapter inventory and PDH busiest-engine utilization | Actual GT0 frequency from i915 or Xe sysfs |
 | Temperatures | Unavailable in the Rust prototype | Exposed hwmon temperature channels |
@@ -37,6 +37,8 @@ Linux utilization and Windows GPU clock and temperature remain unavailable.
 The Rust Linux battery reader uses the first reported battery capacity. It
 does not aggregate multiple batteries or infer AC state from battery status.
 Temperatures at or below absolute zero are discarded.
+Windows CPU utilization is unavailable on hosts with multiple processor groups,
+where a single GetSystemTimes call cannot represent all CPUs.
 
 [DXGI adapter descriptions](https://learn.microsoft.com/en-us/windows/win32/api/dxgi/ns-dxgi-dxgi_adapter_desc1)
 · [PDH counter arrays](https://learn.microsoft.com/en-us/windows/win32/api/pdh/nf-pdh-pdhgetformattedcounterarrayw)

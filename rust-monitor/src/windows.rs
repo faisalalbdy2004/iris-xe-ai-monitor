@@ -1,11 +1,16 @@
-use crate::telemetry::{nonempty, Gpu, Temperature};
+use crate::telemetry::{nonempty, CpuTimes, Gpu, Temperature};
 use std::collections::HashMap;
 use std::mem::size_of;
 use std::ptr::null;
 use windows::Win32::Graphics::Dxgi::{
     CreateDXGIFactory1, IDXGIFactory1, DXGI_ADAPTER_FLAG_SOFTWARE,
 };
-use windows_sys::Win32::System::{Performance::*, Power::*};
+use windows_sys::Win32::Foundation::FILETIME;
+use windows_sys::Win32::System::{
+    Performance::*,
+    Power::*,
+    Threading::{GetActiveProcessorGroupCount, GetSystemTimes},
+};
 
 type Luid = (u32, u32);
 
@@ -207,6 +212,27 @@ impl Sensors {
         let adapters = intel_adapters();
         let engine = (!adapters.is_empty()).then(EngineQuery::new).flatten();
         Self { adapters, engine }
+    }
+
+    pub fn cpu_times(&self) -> Option<CpuTimes> {
+        // GetSystemTimes is limited to the calling thread's processor group
+        // on larger hosts. A group-local number cannot stand for the system.
+        if unsafe { GetActiveProcessorGroupCount() } != 1 {
+            return None;
+        }
+        let mut idle = FILETIME::default();
+        let mut kernel = FILETIME::default();
+        let mut user = FILETIME::default();
+        if unsafe { GetSystemTimes(&mut idle, &mut kernel, &mut user) } == 0 {
+            return None;
+        }
+        let ticks =
+            |time: FILETIME| (u64::from(time.dwHighDateTime) << 32) | u64::from(time.dwLowDateTime);
+        let idle = ticks(idle);
+        Some(CpuTimes {
+            busy: ticks(kernel).checked_sub(idle)?.checked_add(ticks(user))?,
+            idle,
+        })
     }
 
     pub fn power(&self) -> (Option<bool>, Option<f64>) {
