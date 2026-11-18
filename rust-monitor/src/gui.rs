@@ -48,13 +48,13 @@ impl History {
         let (response, painter) =
             ui.allocate_painter(Vec2::new(ui.available_width(), 62.0), egui::Sense::hover());
         let rect = response.rect.shrink(2.0);
-        let grid = Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color);
+        let grid = Stroke::new(1.0_f32, ui.visuals().widgets.noninteractive.bg_stroke.color);
         for ratio in [0.0, 0.5, 1.0] {
             let y = egui::lerp(rect.y_range(), ratio);
             painter.hline(rect.x_range(), y, grid);
         }
         let mut segment = Vec::with_capacity(self.0.len());
-        let stroke = Stroke::new(2.0, color);
+        let stroke = Stroke::new(2.0_f32, color);
         for (index, value) in self.0.iter().enumerate() {
             let x = egui::lerp(
                 rect.x_range(),
