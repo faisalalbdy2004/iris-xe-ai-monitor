@@ -1,4 +1,4 @@
-use crate::telemetry::{nonempty, CpuTimes, Gpu, Temperature};
+use crate::telemetry::{nonempty, CpuTimes, Gpu, HardwareSensors, Temperature};
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -48,8 +48,12 @@ impl Sensors {
             root: "/sys/class".into(),
         }
     }
+}
 
-    pub fn cpu_times(&self) -> Option<CpuTimes> {
+impl HardwareSensors for Sensors {
+    const PLATFORM: &'static str = "Linux";
+
+    fn cpu_times(&self) -> Option<CpuTimes> {
         let mut line = String::new();
         BufReader::new(fs::File::open("/proc/stat").ok()?)
             .read_line(&mut line)
@@ -57,7 +61,7 @@ impl Sensors {
         cpu_times(&line)
     }
 
-    pub fn power(&self) -> (Option<bool>, Option<f64>) {
+    fn power(&self) -> (Option<bool>, Option<f64>) {
         let mut online = Vec::new();
         let mut battery = None;
         for device in files(&self.root.join("power_supply")) {
@@ -84,7 +88,7 @@ impl Sensors {
         (ac, battery)
     }
 
-    pub fn temperatures(&self) -> Option<Vec<Temperature>> {
+    fn temperatures(&self) -> Option<Vec<Temperature>> {
         let mut values = Vec::new();
         for device in files(&self.root.join("hwmon")) {
             let Some(sensor) = text(device.join("name")) else {
@@ -118,7 +122,7 @@ impl Sensors {
         nonempty(values)
     }
 
-    pub fn gpus(&self) -> Option<Vec<Gpu>> {
+    fn gpus(&mut self) -> Option<Vec<Gpu>> {
         let mut cards = Vec::new();
         for card in files(&self.root.join("drm")) {
             let Some(name) = card.file_name().and_then(|name| name.to_str()) else {
@@ -143,6 +147,7 @@ impl Sensors {
                 frequency_mhz,
                 name: None,
                 utilization_percent: None,
+                utilization_scope: None,
             });
         }
         nonempty(cards)
@@ -165,7 +170,7 @@ mod tests {
     #[test]
     fn reads_supported_sysfs_values_and_keeps_missing_values_unknown() {
         let temp = tempfile::tempdir().unwrap();
-        let sensors = Sensors {
+        let mut sensors = Sensors {
             root: temp.path().into(),
         };
         assert_eq!(sensors.power(), (None, None));

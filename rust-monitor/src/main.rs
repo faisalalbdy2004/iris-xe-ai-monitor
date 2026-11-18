@@ -31,6 +31,9 @@ enum Command {
         interval: Duration,
         #[arg(long, value_parser = clap::value_parser!(u32).range(1..))]
         count: Option<u32>,
+        /// Emit one JSON snapshot per line.
+        #[arg(long)]
+        json: bool,
     },
     /// Open the experimental desktop dashboard.
     #[cfg(feature = "gui")]
@@ -117,12 +120,21 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
                 write_snapshot(out, &snapshot)?;
             }
         }
-        Command::Watch { interval, count } => {
+        Command::Watch {
+            interval,
+            count,
+            json,
+        } => {
             let mut sampler = Sampler::new();
             let mut out = io::stdout().lock();
             for index in 0..u32::MAX {
                 let start = Instant::now();
-                write_snapshot(&mut out, &sampler.sample())?;
+                let snapshot = sampler.sample();
+                if json {
+                    serde_json::to_writer(&mut out, &snapshot)?;
+                } else {
+                    write_snapshot(&mut out, &snapshot)?;
+                }
                 writeln!(out)?;
                 out.flush()?;
                 if count == Some(index + 1) {

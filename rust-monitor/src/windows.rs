@@ -1,4 +1,4 @@
-use crate::telemetry::{nonempty, CpuTimes, Gpu, Temperature};
+use crate::telemetry::{nonempty, CpuTimes, Gpu, HardwareSensors, Temperature};
 use std::collections::HashMap;
 use std::mem::size_of;
 use std::ptr::null;
@@ -71,18 +71,25 @@ fn instance(name: &str) -> Option<(Luid, u32, u32)> {
 
 fn busiest(rows: impl IntoIterator<Item = (String, f64)>) -> HashMap<Luid, f64> {
     let mut engines = HashMap::new();
+    let mut invalid = std::collections::HashSet::new();
     for (name, value) in rows {
-        if (0.0..=100.0).contains(&value) {
-            if let Some(key) = instance(&name) {
+        if let Some(key) = instance(&name) {
+            if (0.0..=100.5).contains(&value) {
                 *engines.entry(key).or_insert(0.0) += value;
+            } else {
+                invalid.insert(key.0);
             }
         }
     }
     let mut result = HashMap::new();
     for ((luid, _, _), load) in engines {
+        if load > 100.5 {
+            invalid.insert(luid);
+        }
         let max = result.entry(luid).or_insert(0.0_f64);
         *max = max.max(load.min(100.0));
     }
+    result.retain(|luid, _| !invalid.contains(luid));
     result
 }
 
@@ -121,6 +128,7 @@ impl EngineQuery {
 
     fn read(&mut self) -> Vec<(String, f64)> {
         const MORE_DATA: u32 = 0x8000_07d2;
+        const NO_CAP_100: u32 = 0x8000;
         const MAX_BYTES: usize = 16 * 1024 * 1024;
         let record_size = size_of::<PDH_FMT_COUNTERVALUE_ITEM_W>();
         // SAFETY: PDH writes into initialized, properly aligned storage. Before
@@ -133,7 +141,7 @@ impl EngineQuery {
                 let (mut bytes, mut count) = (0, 0);
                 if PdhGetFormattedCounterArrayW(
                     self.counter,
-                    PDH_FMT_DOUBLE,
+                    PDH_FMT_DOUBLE | NO_CAP_100,
                     &mut bytes,
                     &mut count,
                     std::ptr::null_mut(),
@@ -147,7 +155,7 @@ impl EngineQuery {
                     .resize((bytes as usize).div_ceil(record_size), Default::default());
                 let status = PdhGetFormattedCounterArrayW(
                     self.counter,
-                    PDH_FMT_DOUBLE,
+                    PDH_FMT_DOUBLE | NO_CAP_100,
                     &mut bytes,
                     &mut count,
                     self.buffer.as_mut_ptr(),
@@ -213,8 +221,12 @@ impl Sensors {
         let engine = (!adapters.is_empty()).then(EngineQuery::new).flatten();
         Self { adapters, engine }
     }
+}
 
-    pub fn cpu_times(&self) -> Option<CpuTimes> {
+impl HardwareSensors for Sensors {
+    const PLATFORM: &'static str = "Windows";
+
+    fn cpu_times(&self) -> Option<CpuTimes> {
         // GetSystemTimes is limited to the calling thread's processor group
         // on larger hosts. A group-local number cannot stand for the system.
         if unsafe { GetActiveProcessorGroupCount() } != 1 {
@@ -235,7 +247,7 @@ impl Sensors {
         })
     }
 
-    pub fn power(&self) -> (Option<bool>, Option<f64>) {
+    fn power(&self) -> (Option<bool>, Option<f64>) {
         let mut status = SYSTEM_POWER_STATUS::default();
         if unsafe { GetSystemPowerStatus(&mut status) } == 0 {
             return (None, None);
@@ -252,11 +264,11 @@ impl Sensors {
         (ac, battery)
     }
 
-    pub fn temperatures(&self) -> Option<Vec<Temperature>> {
+    fn temperatures(&self) -> Option<Vec<Temperature>> {
         None
     }
 
-    pub fn gpus(&mut self) -> Option<Vec<Gpu>> {
+    fn gpus(&mut self) -> Option<Vec<Gpu>> {
         let values = self
             .engine
             .as_mut()
@@ -270,6 +282,7 @@ impl Sensors {
                     frequency_mhz: None,
                     name: Some(adapter.name.clone()),
                     utilization_percent: Some(values.get(&adapter.luid).copied()),
+                    utilization_scope: Some("busiest_engine"),
                 })
                 .collect(),
         )
@@ -287,10 +300,21 @@ mod tests {
             ("pid_2_luid_0x0_0xa_phys_0_eng_0_engtype_3D", 22.0),
             ("pid_2_luid_0x0_0xa_phys_0_eng_1_engtype_Video_Decode", 15.0),
             ("pid_2_luid_0x0_0xb_phys_0_eng_0_engtype_3D", 0.0),
-            ("pid_3_luid_0x0_0xa_phys_0_eng_0_engtype_3D", f64::NAN),
+            ("pid_3_luid_0x0_0xc_phys_0_eng_0_engtype_3D", f64::NAN),
             ("unexpected counter instance", 100.0),
         ];
         let actual = busiest(rows.map(|(name, value)| (name.into(), value)));
         assert_eq!(actual, HashMap::from([((0, 10), 40.0), ((0, 11), 0.0)]));
+    }
+
+    #[test]
+    fn impossible_engine_totals_and_missing_rows_are_unavailable() {
+        let rows = [
+            ("pid_1_luid_0x0_0xa_phys_0_eng_0_engtype_3D", 80.0),
+            ("pid_2_luid_0x0_0xa_phys_0_eng_0_engtype_3D", 40.0),
+            ("pid_2_luid_0x0_0xa_phys_0_eng_1_engtype_Copy", 5.0),
+        ];
+        assert!(busiest(rows.map(|(name, value)| (name.into(), value))).is_empty());
+        assert!(busiest([]).is_empty());
     }
 }

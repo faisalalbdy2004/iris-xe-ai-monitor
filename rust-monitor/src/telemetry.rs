@@ -1,6 +1,6 @@
 use serde::Serialize;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use sysinfo::{MemoryRefreshKind, System};
 
 #[cfg(target_os = "linux")]
@@ -38,12 +38,37 @@ pub struct Gpu {
     // an explicit null when its utilization counter is unavailable.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub utilization_percent: Option<Option<f64>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub utilization_scope: Option<&'static str>,
 }
 
-pub struct Sampler {
+pub trait HardwareSensors {
+    const PLATFORM: &'static str;
+    fn cpu_times(&self) -> Option<CpuTimes>;
+    fn power(&self) -> (Option<bool>, Option<f64>);
+    fn temperatures(&self) -> Option<Vec<Temperature>>;
+    fn gpus(&mut self) -> Option<Vec<Gpu>>;
+}
+
+pub struct Sampler<S = platform::Sensors> {
     system: System,
-    platform: platform::Sensors,
-    previous_cpu: Option<CpuTimes>,
+    platform: S,
+    cpu: CpuTracker,
+}
+
+#[derive(Default)]
+struct CpuTracker(Option<(Instant, CpuTimes)>);
+
+impl CpuTracker {
+    fn update(&mut self, now: Instant, current: Option<CpuTimes>) -> Option<f64> {
+        let previous = self.0;
+        self.0 = current.map(|times| (now, times));
+        let (previous_at, previous_times) = previous?;
+        if now.checked_duration_since(previous_at)? < Duration::from_millis(100) {
+            return None;
+        }
+        current?.utilization_since(previous_times)
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -61,31 +86,31 @@ impl CpuTimes {
     }
 }
 
-impl Sampler {
+impl Sampler<platform::Sensors> {
     pub fn new() -> Self {
         let platform = platform::Sensors::new();
-        let previous_cpu = platform.cpu_times();
+        let mut cpu = CpuTracker::default();
+        cpu.update(Instant::now(), platform.cpu_times());
         thread::sleep(Duration::from_millis(200));
         Self {
             system: System::new(),
             platform,
-            previous_cpu,
+            cpu,
         }
     }
+}
 
+impl<S: HardwareSensors> Sampler<S> {
     pub fn sample(&mut self) -> Snapshot {
         let current = self.platform.cpu_times();
-        let cpu_percent = current
-            .zip(self.previous_cpu)
-            .and_then(|(now, previous)| now.utilization_since(previous));
-        self.previous_cpu = current;
+        let cpu_percent = self.cpu.update(Instant::now(), current);
         self.system
             .refresh_memory_specifics(MemoryRefreshKind::nothing().with_ram());
         let total = self.system.total_memory();
         let available = self.system.available_memory().min(total);
         let (ac_online, battery_percent) = self.platform.power();
         Snapshot {
-            platform: if cfg!(windows) { "Windows" } else { "Linux" },
+            platform: S::PLATFORM,
             cpu_percent,
             ram_percent: (total > 0).then(|| 100.0 * (total - available) as f64 / total as f64),
             ram_total_bytes: (total > 0).then_some(total),
@@ -105,6 +130,39 @@ pub fn nonempty<T>(values: Vec<T>) -> Option<Vec<T>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn short_and_missing_sensor_intervals_cannot_publish_a_value() {
+        let mut tracker = CpuTracker::default();
+        let now = Instant::now();
+        let reading = Some(CpuTimes {
+            busy: 100,
+            idle: 200,
+        });
+        assert_eq!(tracker.update(now, reading), None);
+        assert_eq!(
+            tracker.update(
+                now,
+                Some(CpuTimes {
+                    busy: 101,
+                    idle: 201
+                })
+            ),
+            None
+        );
+        assert_eq!(tracker.update(now + Duration::from_secs(1), None), None);
+        assert_eq!(tracker.update(now + Duration::from_secs(2), reading), None);
+        assert_eq!(
+            tracker.update(
+                now + Duration::from_secs(3),
+                Some(CpuTimes {
+                    busy: 140,
+                    idle: 260
+                })
+            ),
+            Some(40.0)
+        );
+    }
 
     #[test]
     fn utilization_preserves_idle_zero_and_rejects_invalid_deltas() {

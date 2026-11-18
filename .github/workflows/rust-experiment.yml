@@ -40,6 +40,8 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           & $binary watch --interval 0.5 --count 2
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          python rust-monitor/validate.py --rust-monitor "$binary" --count 8 | Tee-Object -FilePath "rust-monitor/validation-result.json"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
           $pythonMonitor = (Get-Command iris-monitor).Source
           python rust-monitor/benchmark.py --python-monitor "$pythonMonitor" --rust-monitor "$binary" --repeats 10 --watch-seconds 10 | Tee-Object -FilePath "rust-monitor/benchmark-result.json"
           exit $LASTEXITCODE
@@ -52,27 +54,34 @@ jobs:
             !rust-monitor/target/release/*.pdb
             rust-monitor/Cargo.lock
             rust-monitor/benchmark-result.json
+            rust-monitor/validation-result.json
       - working-directory: rust-monitor
-        run: cargo build --features gui --locked
+        run: cargo test --features gui --locked --release --target-dir target/gui
+      - working-directory: rust-monitor
+        run: cargo build --features gui --locked --release --target-dir target/gui
       - name: Install virtual display runtime dependencies
         if: runner.os == 'Linux'
         run: |
           sudo apt-get update -qq
-          sudo apt-get install -y libxkbcommon-x11-0 libgl1-mesa-dri libegl1 x11-utils xvfb
-      - name: Open the Linux GUI on a virtual display
+          sudo apt-get install -y libxkbcommon-x11-0 libgl1-mesa-dri libegl1 x11-utils xvfb xdotool openbox
+      - name: Benchmark the Linux GUI on a virtual display
         if: runner.os == 'Linux'
         shell: bash
         run: |
           LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a bash -e -c '
-            rust-monitor/target/debug/iris-monitor-rs gui &
-            monitor=$!
-            trap "kill $monitor 2>/dev/null || true" EXIT
-            for _ in {1..20}; do
-              kill -0 "$monitor"
-              if xwininfo -root -tree | grep -F "Iris Xe AI Monitor"; then
-                exit 0
-              fi
-              sleep 1
-            done
-            exit 1
+            openbox &
+            wm=$!
+            trap "kill $wm 2>/dev/null || true" EXIT
+            python rust-monitor/gui_benchmark.py --rust-monitor rust-monitor/target/gui/release/iris-monitor-rs --seconds 6 > rust-monitor/gui-result.json
+            cat rust-monitor/gui-result.json
+            python -c "import json; assert json.load(open(\"rust-monitor/gui-result.json\"))[\"clean_window_close\"]"
           '
+      - uses: actions/upload-artifact@v4
+        with:
+          name: corepulse-gui-${{ matrix.os }}
+          path: |
+            LICENSE
+            rust-monitor/target/gui/release/iris-monitor-rs*
+            !rust-monitor/target/gui/release/*.d
+            !rust-monitor/target/gui/release/*.pdb
+            rust-monitor/gui-result.json

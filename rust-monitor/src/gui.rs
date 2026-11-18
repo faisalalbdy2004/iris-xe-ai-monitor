@@ -1,126 +1,319 @@
 use crate::telemetry::{Sampler, Snapshot};
-use eframe::egui::{self, Color32, RichText};
-use std::sync::mpsc::{self, Receiver, TrySendError};
+use eframe::egui::{self, Color32, RichText, Stroke, Theme, Vec2};
+use std::collections::VecDeque;
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TrySendError};
 use std::time::Duration;
 
+const HISTORY: usize = 60;
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum Cadence {
+    Active,
+    Background,
+    Minimized,
+}
+
+impl Cadence {
+    fn from_window(minimized: Option<bool>, focused: Option<bool>) -> Self {
+        if minimized == Some(true) {
+            Self::Minimized
+        } else if focused == Some(false) {
+            Self::Background
+        } else {
+            Self::Active
+        }
+    }
+
+    fn period(self) -> Duration {
+        Duration::from_secs(match self {
+            Self::Active => 1,
+            Self::Background => 2,
+            Self::Minimized => 5,
+        })
+    }
+}
+
+#[derive(Default)]
+struct History(VecDeque<Option<f32>>);
+
+impl History {
+    fn push(&mut self, value: Option<f64>) {
+        if self.0.len() == HISTORY {
+            self.0.pop_front();
+        }
+        self.0.push_back(value.map(|v| v as f32));
+    }
+
+    fn line(&self, ui: &mut egui::Ui, color: Color32) {
+        let (response, painter) =
+            ui.allocate_painter(Vec2::new(ui.available_width(), 62.0), egui::Sense::hover());
+        let rect = response.rect.shrink(2.0);
+        let grid = Stroke::new(1.0, ui.visuals().widgets.noninteractive.bg_stroke.color);
+        for ratio in [0.0, 0.5, 1.0] {
+            let y = egui::lerp(rect.y_range(), ratio);
+            painter.hline(rect.x_range(), y, grid);
+        }
+        let mut previous = None;
+        for (index, value) in self.0.iter().enumerate() {
+            let x = egui::lerp(
+                rect.x_range(),
+                (HISTORY - self.0.len() + index) as f32 / (HISTORY - 1) as f32,
+            );
+            let point = value.map(|v| egui::pos2(x, rect.bottom() - rect.height() * v / 100.0));
+            if let (Some(a), Some(b)) = (previous, point) {
+                painter.line_segment([a, b], Stroke::new(2.0, color));
+            }
+            previous = point;
+        }
+    }
+}
+
 struct Dashboard {
-    channel: Receiver<Snapshot>,
+    readings: Receiver<Snapshot>,
+    controls: SyncSender<Cadence>,
+    cadence: Cadence,
     latest: Option<Snapshot>,
+    cpu: History,
+    gpu: History,
+    gpu_device: Option<String>,
 }
 
 pub fn run() -> eframe::Result {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
-            .with_inner_size([700.0, 500.0])
-            .with_min_inner_size([460.0, 360.0]),
+            .with_inner_size([820.0, 610.0])
+            .with_min_inner_size([360.0, 400.0]),
         ..Default::default()
     };
     eframe::run_native(
-        "Iris Xe AI Monitor",
+        "CorePulse",
         options,
         Box::new(|app| {
-            let mut visuals = egui::Visuals::dark();
-            visuals.panel_fill = Color32::from_rgb(15, 21, 28);
-            visuals.widgets.inactive.bg_fill = Color32::from_rgb(33, 44, 57);
-            app.egui_ctx.set_visuals(visuals);
+            let mut dark = egui::Visuals::dark();
+            dark.panel_fill = Color32::from_rgb(14, 19, 27);
+            dark.extreme_bg_color = Color32::from_rgb(15, 23, 34);
+            dark.widgets.inactive.bg_fill = Color32::from_rgb(31, 43, 57);
+            app.egui_ctx.set_visuals_of(Theme::Dark, dark);
+            app.egui_ctx.set_theme(Theme::Dark);
 
             let context = app.egui_ctx.clone();
-            let (sender, channel) = mpsc::sync_channel(1);
+            let (sender, readings) = mpsc::sync_channel(1);
+            let (controls, receiver) = mpsc::sync_channel(1);
             std::thread::spawn(move || {
                 let mut sampler = Sampler::new();
+                let mut cadence = Cadence::Active;
                 loop {
                     match sender.try_send(sampler.sample()) {
-                        Ok(()) => context.request_repaint(),
-                        Err(TrySendError::Full(_)) => (),
+                        Ok(()) if cadence != Cadence::Minimized => context.request_repaint(),
                         Err(TrySendError::Disconnected(_)) => break,
+                        _ => (),
                     }
-                    std::thread::sleep(Duration::from_secs(1));
+                    loop {
+                        match receiver.recv_timeout(cadence.period()) {
+                            Ok(new_cadence) => {
+                                cadence = new_cadence;
+                                if cadence == Cadence::Active {
+                                    break;
+                                }
+                            }
+                            Err(RecvTimeoutError::Timeout) => break,
+                            Err(RecvTimeoutError::Disconnected) => return,
+                        }
+                    }
                 }
             });
             Ok(Box::new(Dashboard {
-                channel,
+                readings,
+                controls,
+                cadence: Cadence::Active,
                 latest: None,
+                cpu: History::default(),
+                gpu: History::default(),
+                gpu_device: None,
             }))
         }),
     )
 }
 
-fn metric(ui: &mut egui::Ui, name: &str, value: Option<f64>) {
+fn card(ui: &mut egui::Ui, content: impl FnOnce(&mut egui::Ui)) {
+    egui::Frame::new()
+        .fill(ui.visuals().faint_bg_color)
+        .stroke(ui.visuals().widgets.noninteractive.bg_stroke)
+        .corner_radius(12)
+        .inner_margin(15)
+        .show(ui, |ui| {
+            ui.set_min_width(ui.available_width());
+            content(ui);
+        });
+}
+
+fn value(ui: &mut egui::Ui, name: &str, reading: Option<f64>, caption: &str) {
     ui.label(RichText::new(name).strong());
-    if let Some(value) = value {
-        ui.add(
-            egui::ProgressBar::new((value / 100.0) as f32)
-                .desired_width(ui.available_width().min(280.0))
-                .fill(Color32::from_rgb(93, 198, 174))
-                .text(format!("{value:.1}%")),
-        );
-    } else {
-        ui.weak("Unavailable");
-    }
+    ui.label(
+        RichText::new(reading.map_or_else(|| "Unavailable".into(), |v| format!("{v:.1}%")))
+            .size(26.0),
+    );
+    ui.weak(caption);
 }
 
 impl eframe::App for Dashboard {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        if let Ok(sample) = self.channel.try_recv() {
-            self.latest = Some(sample);
+        let cadence = ctx.input(|input| {
+            let viewport = input.viewport();
+            Cadence::from_window(viewport.minimized, viewport.focused)
+        });
+        if cadence != self.cadence && self.controls.try_send(cadence).is_ok() {
+            self.cadence = cadence;
         }
+        if let Ok(snapshot) = self.readings.try_recv() {
+            let gpu = snapshot.intel_gpus.as_ref().and_then(|cards| cards.first());
+            let device = gpu.map(|card| card.device.as_str());
+            if device != self.gpu_device.as_deref() {
+                self.gpu = History::default();
+                self.gpu_device = device.map(str::to_owned);
+            }
+            self.cpu.push(snapshot.cpu_percent);
+            self.gpu
+                .push(gpu.and_then(|card| card.utilization_percent.flatten()));
+            self.latest = Some(snapshot);
+        }
+        if cadence == Cadence::Minimized {
+            return;
+        }
+
         egui::CentralPanel::default().show(ctx, |ui| {
-            ui.add_space(10.0);
-            ui.heading(RichText::new("Iris Xe AI Monitor").size(28.0).strong());
-            let Some(snapshot) = &self.latest else {
-                ui.weak("Reading system sensors…");
-                return;
-            };
-            ui.weak(snapshot.platform);
-            ui.add_space(10.0);
-            ui.separator();
             egui::ScrollArea::vertical().show(ui, |ui| {
-                ui.columns(2, |columns| {
-                    metric(&mut columns[0], "CPU", snapshot.cpu_percent);
-                    metric(&mut columns[1], "RAM", snapshot.ram_percent);
-                });
-                ui.add_space(13.0);
-                ui.columns(2, |columns| {
-                    metric(&mut columns[0], "Battery", snapshot.battery_percent);
-                    columns[1].label(RichText::new("AC power").strong());
-                    columns[1].label(match snapshot.ac_online {
-                        Some(true) => "Connected",
-                        Some(false) => "Disconnected",
-                        None => "Unavailable",
+                ui.horizontal(|ui| {
+                    ui.heading(RichText::new("CorePulse").size(30.0).strong());
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                        let theme = ctx.theme();
+                        let label = if theme == Theme::Dark {
+                            "Light theme"
+                        } else {
+                            "Dark theme"
+                        };
+                        if ui.button(label).clicked() {
+                            ctx.set_theme(if theme == Theme::Dark {
+                                Theme::Light
+                            } else {
+                                Theme::Dark
+                            });
+                        }
                     });
                 });
-                ui.add_space(15.0);
-                ui.separator();
-                ui.heading("Intel graphics");
-                if let Some(gpus) = &snapshot.intel_gpus {
-                    for gpu in gpus {
-                        let name = gpu.name.as_deref().unwrap_or(&gpu.device);
-                        ui.label(name);
-                        if let Some(busy) = gpu.utilization_percent {
-                            metric(ui, "Busiest engine", busy);
-                        }
-                        ui.weak(gpu.frequency_mhz.map_or_else(
-                            || "Clock unavailable".into(),
-                            |mhz| format!("{mhz} MHz"),
-                        ));
-                    }
+
+                let Some(snapshot) = &self.latest else {
+                    ui.weak("Reading system sensors…");
+                    return;
+                };
+                ui.weak(format!(
+                    "{} · {} s refresh",
+                    snapshot.platform,
+                    cadence.period().as_secs()
+                ));
+                ui.add_space(14.0);
+                let gpu = snapshot.intel_gpus.as_ref().and_then(|cards| cards.first());
+                let accent = if ui.visuals().dark_mode {
+                    Color32::from_rgb(102, 223, 188)
                 } else {
-                    ui.weak("Unavailable");
+                    Color32::from_rgb(0, 112, 92)
+                };
+                let cpu_card = |ui: &mut egui::Ui| {
+                    card(ui, |ui| {
+                        value(ui, "CPU usage", snapshot.cpu_percent, "System time");
+                        self.cpu.line(ui, accent);
+                    })
+                };
+                let gpu_card = |ui: &mut egui::Ui| {
+                    card(ui, |ui| {
+                        value(
+                            ui,
+                            "Intel GPU · busiest engine",
+                            gpu.and_then(|card| card.utilization_percent.flatten()),
+                            gpu.map(|card| card.name.as_deref().unwrap_or(&card.device))
+                                .unwrap_or("No Intel adapter reading"),
+                        );
+                        self.gpu.line(ui, accent);
+                        if let Some(mhz) = gpu.and_then(|card| card.frequency_mhz) {
+                            ui.label(format!("GT0 clock · {mhz} MHz"));
+                        }
+                    })
+                };
+                if ui.available_width() >= 590.0 {
+                    ui.columns(2, |columns| {
+                        cpu_card(&mut columns[0]);
+                        gpu_card(&mut columns[1]);
+                    });
+                } else {
+                    cpu_card(ui);
+                    ui.add_space(8.0);
+                    gpu_card(ui);
                 }
                 ui.add_space(10.0);
-                ui.heading("Temperatures");
-                if let Some(readings) = &snapshot.temperatures {
-                    for sensor in readings {
-                        ui.label(format!(
-                            "{} · {:.1} °C",
-                            sensor.label.as_deref().unwrap_or(&sensor.sensor),
-                            sensor.celsius
-                        ));
+                card(ui, |ui| {
+                    let memory = snapshot.ram_total_bytes.map_or_else(
+                        || "Capacity unavailable".into(),
+                        |bytes| format!("{:.1} GiB total", bytes as f64 / 1073741824.0),
+                    );
+                    let power = match snapshot.ac_online {
+                        Some(true) => "AC connected",
+                        Some(false) => "AC disconnected",
+                        None => "AC status unavailable",
+                    };
+                    ui.columns(2, |columns| {
+                        value(&mut columns[0], "RAM usage", snapshot.ram_percent, &memory);
+                        value(&mut columns[1], "Battery", snapshot.battery_percent, power);
+                    });
+                });
+                ui.add_space(10.0);
+                card(ui, |ui| {
+                    ui.label(RichText::new("Temperatures").strong());
+                    if let Some(readings) = &snapshot.temperatures {
+                        for sensor in readings {
+                            ui.label(format!(
+                                "{} · {:.1} °C",
+                                sensor.label.as_deref().unwrap_or(&sensor.sensor),
+                                sensor.celsius
+                            ));
+                        }
+                    } else {
+                        ui.weak("Unavailable");
                     }
-                } else {
-                    ui.weak("Unavailable");
-                }
+                });
             });
         });
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn history_is_bounded_and_keeps_unavailable_as_a_gap() {
+        let mut history = History::default();
+        for i in 0..HISTORY {
+            history.push(Some(i as f64));
+        }
+        history.push(None);
+        assert_eq!(history.0.len(), HISTORY);
+        assert_eq!(history.0.front(), Some(&Some(1.0)));
+        assert_eq!(history.0.back(), Some(&None));
+    }
+
+    #[test]
+    fn minimized_and_background_window_states_reduce_sampling() {
+        assert_eq!(
+            Cadence::from_window(Some(true), Some(false)).period(),
+            Duration::from_secs(5)
+        );
+        assert_eq!(
+            Cadence::from_window(None, Some(false)).period(),
+            Duration::from_secs(2)
+        );
+        assert_eq!(
+            Cadence::from_window(Some(false), Some(true)).period(),
+            Duration::from_secs(1)
+        );
     }
 }
