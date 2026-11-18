@@ -1,6 +1,7 @@
 """Compare release Rust and installed Python CLI under an identical text-watch workload."""
 
 import argparse
+from collections import Counter
 import concurrent.futures
 import json
 import statistics
@@ -92,6 +93,7 @@ def comparison(python, rust, repeats):
     metrics = ("cpu_percent", "ram_percent", "ram_total_bytes", "ac_online", "battery_percent")
     matched = {metric: [] for metric in metrics}
     frequencies, gpu_busy, temperatures = [], [], []
+    ambiguous_temperature_keys = 0
     with concurrent.futures.ThreadPoolExecutor(max_workers=2) as executor:
         for _ in range(repeats):
             jobs = [executor.submit(run, [exe, "status", "--json"]) for exe in (python, rust)]
@@ -107,16 +109,23 @@ def comparison(python, rust, repeats):
                 for name, pairs in (("frequency_mhz", frequencies), ("utilization_percent", gpu_busy)):
                     if gpu.get(name) is not None and other.get(name) is not None:
                         pairs.append((gpu[name], other[name]))
-            left_temp = {(t["sensor"], t["label"]): t["celsius"] for t in left["temperatures"] or []}
-            for reading in right["temperatures"] or []:
-                key = reading["sensor"], reading["label"]
-                if key in left_temp:
-                    temperatures.append((left_temp[key], reading["celsius"]))
+            left_rows, right_rows = [snapshot["temperatures"] or [] for snapshot in (left, right)]
+            left_counts, right_counts = [
+                Counter((row["sensor"], row["label"]) for row in rows)
+                for rows in (left_rows, right_rows)
+            ]
+            common = left_counts.keys() & right_counts.keys()
+            unique = {key for key in common if left_counts[key] == right_counts[key] == 1}
+            ambiguous_temperature_keys += len(common - unique)
+            left_temp = {(row["sensor"], row["label"]): row["celsius"] for row in left_rows}
+            right_temp = {(row["sensor"], row["label"]): row["celsius"] for row in right_rows}
+            temperatures.extend((left_temp[key], right_temp[key]) for key in unique)
     return {
         **{metric: pairwise_stats(pairs) for metric, pairs in matched.items()},
         "gpu_frequency_mhz": pairwise_stats(frequencies),
         "gpu_utilization_percentage_points": pairwise_stats(gpu_busy),
         "temperature_celsius": pairwise_stats(temperatures),
+        "ambiguous_temperature_keys_skipped": ambiguous_temperature_keys,
     }
 
 

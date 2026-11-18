@@ -61,4 +61,5 @@ are inconclusive. Measurements cover the CLI only.
 Concurrent snapshot pairs report agreement, in each metric's own units, on
 readings both implementations expose. They are not an independent accuracy
 reference and the sample windows are not identical. Zero matched samples are
-reported separately from a measured zero difference.
+reported separately from a measured zero difference. Repeated temperature
+labels are excluded when they cannot identify one sensor on each side.

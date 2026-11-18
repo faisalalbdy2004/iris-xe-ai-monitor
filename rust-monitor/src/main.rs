@@ -1,10 +1,10 @@
-mod telemetry;
-#[cfg(target_os = "linux")]
-mod linux;
-#[cfg(windows)]
-mod windows;
 #[cfg(feature = "gui")]
 mod gui;
+#[cfg(target_os = "linux")]
+mod linux;
+mod telemetry;
+#[cfg(windows)]
+mod windows;
 
 use clap::{Parser, Subcommand};
 use std::io::{self, Write};
@@ -55,18 +55,34 @@ fn write_snapshot(mut out: impl Write, snapshot: &Snapshot) -> io::Result<()> {
     writeln!(out, "CPU utilization: {}", percent(snapshot.cpu_percent))?;
     writeln!(out, "RAM utilization: {}", percent(snapshot.ram_percent))?;
     writeln!(out, "RAM total: {}", bytes(snapshot.ram_total_bytes))?;
-    writeln!(out, "RAM available: {}", bytes(snapshot.ram_available_bytes))?;
-    writeln!(out, "AC power: {}", match snapshot.ac_online {
-        Some(true) => "online", Some(false) => "offline", None => "unavailable",
-    })?;
+    writeln!(
+        out,
+        "RAM available: {}",
+        bytes(snapshot.ram_available_bytes)
+    )?;
+    writeln!(
+        out,
+        "AC power: {}",
+        match snapshot.ac_online {
+            Some(true) => "online",
+            Some(false) => "offline",
+            None => "unavailable",
+        }
+    )?;
     writeln!(out, "Battery charge: {}", percent(snapshot.battery_percent))?;
     if let Some(gpus) = &snapshot.intel_gpus {
         for gpu in gpus {
             let device = gpu.name.as_deref().unwrap_or(&gpu.device);
             if let Some(utilization) = gpu.utilization_percent {
-                writeln!(out, "Intel GPU ({device}) busiest engine: {}", percent(utilization))?;
+                writeln!(
+                    out,
+                    "Intel GPU ({device}) busiest engine: {}",
+                    percent(utilization)
+                )?;
             }
-            let clock = gpu.frequency_mhz.map_or_else(|| "unavailable".into(), |f| format!("{f} MHz"));
+            let clock = gpu
+                .frequency_mhz
+                .map_or_else(|| "unavailable".into(), |f| format!("{f} MHz"));
             writeln!(out, "Intel GPU ({device}) frequency: {clock}")?;
         }
     } else {
@@ -74,8 +90,13 @@ fn write_snapshot(mut out: impl Write, snapshot: &Snapshot) -> io::Result<()> {
     }
     if let Some(readings) = &snapshot.temperatures {
         for t in readings {
-            writeln!(out, "Temperature ({}, {}): {:.1} C", t.sensor,
-                     t.label.as_deref().unwrap_or("unlabeled"), t.celsius)?;
+            writeln!(
+                out,
+                "Temperature ({}, {}): {:.1} C",
+                t.sensor,
+                t.label.as_deref().unwrap_or("unlabeled"),
+                t.celsius
+            )?;
         }
     } else {
         writeln!(out, "Temperatures: unavailable")?;
@@ -133,11 +154,14 @@ mod tests {
             temperatures: None,
             intel_gpus: None,
         };
-        assert_eq!(serde_json::to_value(sample).unwrap(), serde_json::json!({
-            "platform": "Linux", "cpu_percent": 0.0, "ram_percent": null,
-            "ram_total_bytes": null, "ram_available_bytes": null, "ac_online": false,
-            "battery_percent": null, "temperatures": null, "intel_gpus": null,
-        }));
+        assert_eq!(
+            serde_json::to_value(sample).unwrap(),
+            serde_json::json!({
+                "platform": "Linux", "cpu_percent": 0.0, "ram_percent": null,
+                "ram_total_bytes": null, "ram_available_bytes": null, "ac_online": false,
+                "battery_percent": null, "temperatures": null, "intel_gpus": null,
+            })
+        );
         assert!(interval("NaN").is_err());
         assert_eq!(interval("0.5").unwrap(), Duration::from_millis(500));
     }

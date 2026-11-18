@@ -23,7 +23,9 @@ fn files(path: &Path) -> Vec<PathBuf> {
 
 impl Sensors {
     pub fn new() -> Self {
-        Self { root: "/sys/class".into() }
+        Self {
+            root: "/sys/class".into(),
+        }
     }
 
     pub fn power(&self) -> (Option<bool>, Option<f64>) {
@@ -56,21 +58,30 @@ impl Sensors {
     pub fn temperatures(&self) -> Option<Vec<Temperature>> {
         let mut values = Vec::new();
         for device in files(&self.root.join("hwmon")) {
-            let Some(sensor) = text(device.join("name")) else { continue };
+            let Some(sensor) = text(device.join("name")) else {
+                continue;
+            };
             for file in files(&device) {
-                let Some(channel) = file.file_name().and_then(|name| name.to_str())
+                let Some(channel) = file
+                    .file_name()
+                    .and_then(|name| name.to_str())
                     .and_then(|name| name.strip_prefix("temp"))
                     .and_then(|name| name.strip_suffix("_input"))
                     .filter(|name| !name.is_empty() && name.bytes().all(|b| b.is_ascii_digit()))
                 else {
                     continue;
                 };
-                let label = text(device.join(format!("temp{channel}_label"))).filter(|v| !v.is_empty());
+                let label =
+                    text(device.join(format!("temp{channel}_label"))).filter(|v| !v.is_empty());
                 if let Some(celsius) = text(file)
                     .and_then(|v| v.parse::<i64>().ok())
                     .map(|v| v as f64 / 1000.0)
                 {
-                    values.push(Temperature { sensor: sensor.clone(), label, celsius });
+                    values.push(Temperature {
+                        sensor: sensor.clone(),
+                        label,
+                        celsius,
+                    });
                 }
             }
         }
@@ -80,17 +91,29 @@ impl Sensors {
     pub fn gpus(&self) -> Option<Vec<Gpu>> {
         let mut cards = Vec::new();
         for card in files(&self.root.join("drm")) {
-            let Some(name) = card.file_name().and_then(|name| name.to_str()) else { continue };
-            if !name.strip_prefix("card").is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
+            let Some(name) = card.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            if !name
+                .strip_prefix("card")
+                .is_some_and(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
                 || text(card.join("device/vendor")).as_deref() != Some("0x8086")
             {
                 continue;
             }
-            let frequency_mhz = ["gt_act_freq_mhz", "gt/gt0/rps_act_freq_mhz",
-                "device/tile0/gt0/freq0/act_freq"]
-                .into_iter()
-                .find_map(|file| text(card.join(file))?.parse::<u64>().ok());
-            cards.push(Gpu { device: name.to_owned(), frequency_mhz, name: None, utilization_percent: None });
+            let frequency_mhz = [
+                "gt_act_freq_mhz",
+                "gt/gt0/rps_act_freq_mhz",
+                "device/tile0/gt0/freq0/act_freq",
+            ]
+            .into_iter()
+            .find_map(|file| text(card.join(file))?.parse::<u64>().ok());
+            cards.push(Gpu {
+                device: name.to_owned(),
+                frequency_mhz,
+                name: None,
+                utilization_percent: None,
+            });
         }
         nonempty(cards)
     }
@@ -103,7 +126,9 @@ mod tests {
     #[test]
     fn reads_supported_sysfs_values_and_keeps_missing_values_unknown() {
         let temp = tempfile::tempdir().unwrap();
-        let sensors = Sensors { root: temp.path().into() };
+        let sensors = Sensors {
+            root: temp.path().into(),
+        };
         assert_eq!(sensors.power(), (None, None));
         assert!(sensors.temperatures().is_none());
         assert!(sensors.gpus().is_none());

@@ -10,40 +10,50 @@ struct Dashboard {
 
 pub fn run() -> eframe::Result {
     let options = eframe::NativeOptions {
-        viewport: egui::ViewportBuilder::default().with_inner_size([700.0, 500.0])
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([700.0, 500.0])
             .with_min_inner_size([460.0, 360.0]),
         ..Default::default()
     };
-    eframe::run_native("Iris Xe AI Monitor", options, Box::new(|app| {
-        let mut visuals = egui::Visuals::dark();
-        visuals.panel_fill = Color32::from_rgb(15, 21, 28);
-        visuals.widgets.inactive.bg_fill = Color32::from_rgb(33, 44, 57);
-        app.egui_ctx.set_visuals(visuals);
+    eframe::run_native(
+        "Iris Xe AI Monitor",
+        options,
+        Box::new(|app| {
+            let mut visuals = egui::Visuals::dark();
+            visuals.panel_fill = Color32::from_rgb(15, 21, 28);
+            visuals.widgets.inactive.bg_fill = Color32::from_rgb(33, 44, 57);
+            app.egui_ctx.set_visuals(visuals);
 
-        let context = app.egui_ctx.clone();
-        let (sender, channel) = mpsc::sync_channel(1);
-        std::thread::spawn(move || {
-            let mut sampler = Sampler::new();
-            loop {
-                match sender.try_send(sampler.sample()) {
-                    Ok(()) => context.request_repaint(),
-                    Err(TrySendError::Full(_)) => (),
-                    Err(TrySendError::Disconnected(_)) => break,
+            let context = app.egui_ctx.clone();
+            let (sender, channel) = mpsc::sync_channel(1);
+            std::thread::spawn(move || {
+                let mut sampler = Sampler::new();
+                loop {
+                    match sender.try_send(sampler.sample()) {
+                        Ok(()) => context.request_repaint(),
+                        Err(TrySendError::Full(_)) => (),
+                        Err(TrySendError::Disconnected(_)) => break,
+                    }
+                    std::thread::sleep(Duration::from_secs(1));
                 }
-                std::thread::sleep(Duration::from_secs(1));
-            }
-        });
-        Ok(Box::new(Dashboard { channel, latest: None }))
-    }))
+            });
+            Ok(Box::new(Dashboard {
+                channel,
+                latest: None,
+            }))
+        }),
+    )
 }
 
 fn metric(ui: &mut egui::Ui, name: &str, value: Option<f64>) {
     ui.label(RichText::new(name).strong());
     if let Some(value) = value {
-        ui.add(egui::ProgressBar::new((value / 100.0) as f32)
-            .desired_width(ui.available_width().min(280.0))
-            .fill(Color32::from_rgb(93, 198, 174))
-            .text(format!("{value:.1}%")));
+        ui.add(
+            egui::ProgressBar::new((value / 100.0) as f32)
+                .desired_width(ui.available_width().min(280.0))
+                .fill(Color32::from_rgb(93, 198, 174))
+                .text(format!("{value:.1}%")),
+        );
     } else {
         ui.weak("Unavailable");
     }
@@ -74,7 +84,9 @@ impl eframe::App for Dashboard {
                     metric(&mut columns[0], "Battery", snapshot.battery_percent);
                     columns[1].label(RichText::new("AC power").strong());
                     columns[1].label(match snapshot.ac_online {
-                        Some(true) => "Connected", Some(false) => "Disconnected", None => "Unavailable",
+                        Some(true) => "Connected",
+                        Some(false) => "Disconnected",
+                        None => "Unavailable",
                     });
                 });
                 ui.add_space(15.0);
@@ -88,7 +100,8 @@ impl eframe::App for Dashboard {
                             metric(ui, "Busiest engine", busy);
                         }
                         ui.weak(gpu.frequency_mhz.map_or_else(
-                            || "Clock unavailable".into(), |mhz| format!("{mhz} MHz"),
+                            || "Clock unavailable".into(),
+                            |mhz| format!("{mhz} MHz"),
                         ));
                     }
                 } else {
@@ -98,8 +111,11 @@ impl eframe::App for Dashboard {
                 ui.heading("Temperatures");
                 if let Some(readings) = &snapshot.temperatures {
                     for sensor in readings {
-                        ui.label(format!("{} · {:.1} °C",
-                            sensor.label.as_deref().unwrap_or(&sensor.sensor), sensor.celsius));
+                        ui.label(format!(
+                            "{} · {:.1} °C",
+                            sensor.label.as_deref().unwrap_or(&sensor.sensor),
+                            sensor.celsius
+                        ));
                     }
                 } else {
                     ui.weak("Unavailable");
