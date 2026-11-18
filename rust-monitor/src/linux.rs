@@ -75,6 +75,7 @@ impl Sensors {
                     text(device.join(format!("temp{channel}_label"))).filter(|v| !v.is_empty());
                 if let Some(celsius) = text(file)
                     .and_then(|v| v.parse::<i64>().ok())
+                    .filter(|&millidegrees| millidegrees > -273_150)
                     .map(|v| v as f64 / 1000.0)
                 {
                     values.push(Temperature {
@@ -141,6 +142,7 @@ mod tests {
             ("hwmon/hwmon0/temp1_input", "41500"),
             ("hwmon/hwmon0/temp1_label", "Package"),
             ("hwmon/hwmon0/temp2_input", "bad"),
+            ("hwmon/hwmon0/temp3_input", "-273150"),
             ("drm/card0/device/vendor", "0x8086"),
             ("drm/card0/gt_act_freq_mhz", "bad"),
             ("drm/card0/device/tile0/gt0/freq0/act_freq", "300"),
