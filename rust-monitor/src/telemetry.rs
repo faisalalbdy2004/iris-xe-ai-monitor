@@ -1,7 +1,6 @@
 use serde::Serialize;
 use std::thread;
 use std::time::{Duration, Instant};
-use sysinfo::{MemoryRefreshKind, System};
 
 #[cfg(target_os = "linux")]
 use crate::linux as platform;
@@ -45,13 +44,13 @@ pub struct Gpu {
 pub trait HardwareSensors {
     const PLATFORM: &'static str;
     fn cpu_times(&self) -> Option<CpuTimes>;
+    fn memory(&self) -> Option<(u64, u64)>;
     fn power(&self) -> (Option<bool>, Option<f64>);
     fn temperatures(&self) -> Option<Vec<Temperature>>;
     fn gpus(&mut self) -> Option<Vec<Gpu>>;
 }
 
 pub struct Sampler<S = platform::Sensors> {
-    system: System,
     platform: S,
     cpu: CpuTracker,
 }
@@ -92,11 +91,7 @@ impl Sampler<platform::Sensors> {
         let mut cpu = CpuTracker::default();
         cpu.update(Instant::now(), platform.cpu_times());
         thread::sleep(Duration::from_millis(200));
-        Self {
-            system: System::new(),
-            platform,
-            cpu,
-        }
+        Self { platform, cpu }
     }
 }
 
@@ -104,17 +99,18 @@ impl<S: HardwareSensors> Sampler<S> {
     pub fn sample(&mut self) -> Snapshot {
         let current = self.platform.cpu_times();
         let cpu_percent = self.cpu.update(Instant::now(), current);
-        self.system
-            .refresh_memory_specifics(MemoryRefreshKind::nothing().with_ram());
-        let total = self.system.total_memory();
-        let available = self.system.available_memory().min(total);
+        let ram = self
+            .platform
+            .memory()
+            .filter(|&(total, available)| total > 0 && available <= total);
         let (ac_online, battery_percent) = self.platform.power();
         Snapshot {
             platform: S::PLATFORM,
             cpu_percent,
-            ram_percent: (total > 0).then(|| 100.0 * (total - available) as f64 / total as f64),
-            ram_total_bytes: (total > 0).then_some(total),
-            ram_available_bytes: (total > 0).then_some(available),
+            ram_percent: ram
+                .map(|(total, available)| 100.0 * (total - available) as f64 / total as f64),
+            ram_total_bytes: ram.map(|(total, _)| total),
+            ram_available_bytes: ram.map(|(_, available)| available),
             ac_online,
             battery_percent,
             temperatures: self.platform.temperatures(),
@@ -130,6 +126,41 @@ pub fn nonempty<T>(values: Vec<T>) -> Option<Vec<T>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    struct FailedSensors;
+
+    impl HardwareSensors for FailedSensors {
+        const PLATFORM: &'static str = "fixture";
+
+        fn cpu_times(&self) -> Option<CpuTimes> {
+            None
+        }
+        fn memory(&self) -> Option<(u64, u64)> {
+            Some((50, 51))
+        }
+        fn power(&self) -> (Option<bool>, Option<f64>) {
+            (None, None)
+        }
+        fn temperatures(&self) -> Option<Vec<Temperature>> {
+            None
+        }
+        fn gpus(&mut self) -> Option<Vec<Gpu>> {
+            None
+        }
+    }
+
+    #[test]
+    fn missing_hardware_and_invalid_ram_are_null_in_the_snapshot() {
+        let mut sampler = Sampler {
+            platform: FailedSensors,
+            cpu: CpuTracker::default(),
+        };
+        let snapshot = serde_json::to_value(sampler.sample()).unwrap();
+        let fields = snapshot.as_object().unwrap();
+        assert!(fields
+            .iter()
+            .all(|(key, value)| key == "platform" || value.is_null()));
+    }
 
     #[test]
     fn short_and_missing_sensor_intervals_cannot_publish_a_value() {

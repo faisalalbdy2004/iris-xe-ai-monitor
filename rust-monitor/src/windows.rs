@@ -9,6 +9,7 @@ use windows_sys::Win32::Foundation::FILETIME;
 use windows_sys::Win32::System::{
     Performance::*,
     Power::*,
+    SystemInformation::{GlobalMemoryStatusEx, MEMORYSTATUSEX},
     Threading::{GetActiveProcessorGroupCount, GetSystemTimes},
 };
 
@@ -245,6 +246,15 @@ impl HardwareSensors for Sensors {
             busy: ticks(kernel).checked_sub(idle)?.checked_add(ticks(user))?,
             idle,
         })
+    }
+
+    fn memory(&self) -> Option<(u64, u64)> {
+        let mut status = MEMORYSTATUSEX {
+            dwLength: size_of::<MEMORYSTATUSEX>() as u32,
+            ..Default::default()
+        };
+        (unsafe { GlobalMemoryStatusEx(&mut status) } != 0)
+            .then_some((status.ullTotalPhys, status.ullAvailPhys))
     }
 
     fn power(&self) -> (Option<bool>, Option<f64>) {

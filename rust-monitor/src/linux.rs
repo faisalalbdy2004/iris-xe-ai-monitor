@@ -42,6 +42,19 @@ fn cpu_times(line: &str) -> Option<CpuTimes> {
     })
 }
 
+fn memory(text: &str) -> Option<(u64, u64)> {
+    let bytes = |name: &str| {
+        let mut words = text
+            .lines()
+            .find_map(|line| line.strip_prefix(name))?
+            .split_whitespace();
+        let amount = words.next()?.parse::<u64>().ok()?;
+        (words.next()? == "kB").then_some(())?;
+        amount.checked_mul(1024)
+    };
+    Some((bytes("MemTotal:")?, bytes("MemAvailable:")?))
+}
+
 impl Sensors {
     pub fn new() -> Self {
         Self {
@@ -59,6 +72,10 @@ impl HardwareSensors for Sensors {
             .read_line(&mut line)
             .ok()?;
         cpu_times(&line)
+    }
+
+    fn memory(&self) -> Option<(u64, u64)> {
+        memory(&fs::read_to_string("/proc/meminfo").ok()?)
     }
 
     fn power(&self) -> (Option<bool>, Option<f64>) {
@@ -157,6 +174,16 @@ impl HardwareSensors for Sensors {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ram_requires_available_counter_and_valid_units() {
+        assert_eq!(
+            memory("MemTotal: 42 kB\nMemAvailable: 4 kB"),
+            Some((43008, 4096))
+        );
+        assert!(memory("MemTotal: 42 kB\nMemAvailable: 4 bytes").is_none());
+        assert!(memory("MemTotal: 42 kB\nMemFree: 4 kB").is_none());
+    }
 
     #[test]
     fn aggregate_cpu_ignores_guest_duplicates_and_accepts_only_complete_rows() {

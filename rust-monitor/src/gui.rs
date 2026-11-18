@@ -1,8 +1,8 @@
 use crate::telemetry::{Sampler, Snapshot};
 use eframe::egui::{self, Color32, RichText, Stroke, Theme, Vec2};
 use std::collections::VecDeque;
-use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender, TrySendError};
-use std::time::Duration;
+use std::sync::mpsc::{self, Receiver, SyncSender};
+use std::time::{Duration, Instant};
 
 const HISTORY: usize = 60;
 
@@ -70,8 +70,9 @@ impl History {
 
 struct Dashboard {
     readings: Receiver<Snapshot>,
-    controls: SyncSender<Cadence>,
-    cadence: Cadence,
+    requests: SyncSender<()>,
+    pending: bool,
+    last_poll: Option<Instant>,
     latest: Option<Snapshot>,
     cpu: History,
     gpu: History,
@@ -98,34 +99,27 @@ pub fn run() -> eframe::Result {
 
             let context = app.egui_ctx.clone();
             let (sender, readings) = mpsc::sync_channel(1);
-            let (controls, receiver) = mpsc::sync_channel(1);
+            let (requests, receiver) = mpsc::sync_channel(1);
             std::thread::spawn(move || {
+                if receiver.recv().is_err() {
+                    return;
+                }
                 let mut sampler = Sampler::new();
-                let mut cadence = Cadence::Active;
                 loop {
-                    match sender.try_send(sampler.sample()) {
-                        Ok(()) if cadence != Cadence::Minimized => context.request_repaint(),
-                        Err(TrySendError::Disconnected(_)) => break,
-                        _ => (),
+                    if sender.send(sampler.sample()).is_err() {
+                        break;
                     }
-                    loop {
-                        match receiver.recv_timeout(cadence.period()) {
-                            Ok(new_cadence) => {
-                                cadence = new_cadence;
-                                if cadence == Cadence::Active {
-                                    break;
-                                }
-                            }
-                            Err(RecvTimeoutError::Timeout) => break,
-                            Err(RecvTimeoutError::Disconnected) => return,
-                        }
+                    context.request_repaint();
+                    if receiver.recv().is_err() {
+                        break;
                     }
                 }
             });
             Ok(Box::new(Dashboard {
                 readings,
-                controls,
-                cadence: Cadence::Active,
+                requests,
+                pending: false,
+                last_poll: None,
                 latest: None,
                 cpu: History::default(),
                 gpu: History::default(),
@@ -162,10 +156,8 @@ impl eframe::App for Dashboard {
             let viewport = input.viewport();
             Cadence::from_window(viewport.minimized, viewport.focused)
         });
-        if cadence != self.cadence && self.controls.try_send(cadence).is_ok() {
-            self.cadence = cadence;
-        }
         if let Ok(snapshot) = self.readings.try_recv() {
+            self.pending = false;
             let gpu = snapshot.intel_gpus.as_ref().and_then(|cards| cards.first());
             let device = gpu.map(|card| card.device.as_str());
             if device != self.gpu_device.as_deref() {
@@ -176,6 +168,21 @@ impl eframe::App for Dashboard {
             self.gpu
                 .push(gpu.and_then(|card| card.utilization_percent.flatten()));
             self.latest = Some(snapshot);
+        }
+        // If the windowing backend stops frames while minimized, the worker
+        // sleeps until the window becomes visible again.
+        if !self.pending {
+            let delay = self.last_poll.map_or(Duration::ZERO, |last| {
+                cadence.period().saturating_sub(last.elapsed())
+            });
+            if delay.is_zero() {
+                if self.requests.try_send(()).is_ok() {
+                    self.last_poll = Some(Instant::now());
+                    self.pending = true;
+                }
+            } else {
+                ctx.request_repaint_after(delay);
+            }
         }
         if cadence == Cadence::Minimized {
             return;
