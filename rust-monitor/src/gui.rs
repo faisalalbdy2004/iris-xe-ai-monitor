@@ -24,12 +24,12 @@ impl Cadence {
         }
     }
 
-    fn period(self) -> Duration {
-        Duration::from_secs(match self {
-            Self::Active => 1,
-            Self::Background => 2,
-            Self::Minimized => 5,
-        })
+    fn period(self) -> Option<Duration> {
+        match self {
+            Self::Active => Some(Duration::from_secs(1)),
+            Self::Background => Some(Duration::from_secs(2)),
+            Self::Minimized => None,
+        }
     }
 }
 
@@ -96,6 +96,7 @@ pub fn run() -> eframe::Result {
             dark.widgets.inactive.bg_fill = Color32::from_rgb(31, 43, 57);
             app.egui_ctx.set_visuals_of(Theme::Dark, dark);
             app.egui_ctx.set_theme(Theme::Dark);
+            app.egui_ctx.style_mut(|style| style.animation_time = 0.0);
 
             let context = app.egui_ctx.clone();
             let (sender, readings) = mpsc::sync_channel(1);
@@ -169,12 +170,15 @@ impl eframe::App for Dashboard {
                 .push(gpu.and_then(|card| card.utilization_percent.flatten()));
             self.latest = Some(snapshot);
         }
-        // If the windowing backend stops frames while minimized, the worker
-        // sleeps until the window becomes visible again.
+        // An OS restore event resumes sampling. A minimized window schedules
+        // neither telemetry work nor a timer-driven repaint.
+        let Some(period) = cadence.period() else {
+            return;
+        };
         if !self.pending {
-            let delay = self.last_poll.map_or(Duration::ZERO, |last| {
-                cadence.period().saturating_sub(last.elapsed())
-            });
+            let delay = self
+                .last_poll
+                .map_or(Duration::ZERO, |last| period.saturating_sub(last.elapsed()));
             if delay.is_zero() {
                 if self.requests.try_send(()).is_ok() {
                     self.last_poll = Some(Instant::now());
@@ -183,9 +187,6 @@ impl eframe::App for Dashboard {
             } else {
                 ctx.request_repaint_after(delay);
             }
-        }
-        if cadence == Cadence::Minimized {
-            return;
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -216,7 +217,7 @@ impl eframe::App for Dashboard {
                 ui.weak(format!(
                     "{} · {} s refresh",
                     snapshot.platform,
-                    cadence.period().as_secs()
+                    period.as_secs()
                 ));
                 ui.add_space(14.0);
                 let gpu = snapshot.intel_gpus.as_ref().and_then(|cards| cards.first());
@@ -310,17 +311,14 @@ mod tests {
 
     #[test]
     fn minimized_and_background_window_states_reduce_sampling() {
-        assert_eq!(
-            Cadence::from_window(Some(true), Some(false)).period(),
-            Duration::from_secs(5)
-        );
+        assert_eq!(Cadence::from_window(Some(true), Some(false)).period(), None);
         assert_eq!(
             Cadence::from_window(None, Some(false)).period(),
-            Duration::from_secs(2)
+            Some(Duration::from_secs(2))
         );
         assert_eq!(
             Cadence::from_window(Some(false), Some(true)).period(),
-            Duration::from_secs(1)
+            Some(Duration::from_secs(1))
         );
     }
 }

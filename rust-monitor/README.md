@@ -23,10 +23,9 @@ On Linux the GUI uses X11 or Wayland, libxkbcommon, and a desktop OpenGL
 implementation. Its X11 backend also uses libxkbcommon-x11.
 The desktop offers dark and light themes, 60-sample CPU and GPU histories
 with gaps for missing readings, and stacked cards at narrow widths. Its
-single worker polls on demand. The desktop requests a sample every one second
-while focused, two seconds when unfocused, and five seconds when minimized
-if the backend still supplies frames. A backend that suspends minimized
-frames also suspends polling.
+single worker polls on demand. The desktop requests a sample every second
+while focused and every two seconds when unfocused. It pauses new samples
+and timer-driven repaints when the backend reports the window minimized.
 
 ## Sensor coverage
 

@@ -66,6 +66,9 @@ class WindowsWindow:
     def minimized(self):
         return self.is_minimized(self.handle)
 
+    def restore(self):
+        self.show(self.handle, 9)
+
     def utilization(self):
         values = defaultdict(float)
         for name, value in self.gpu.read():
@@ -105,6 +108,10 @@ class X11Window:
         result = subprocess.run(["xprop", "-id", self.handle, "_NET_WM_STATE"],
                                 capture_output=True, text=True, timeout=2)
         return "_NET_WM_STATE_HIDDEN" in result.stdout
+
+    def restore(self):
+        subprocess.run(["xdotool", "windowactivate", "--sync", self.handle],
+                       check=True, timeout=3)
 
     def utilization(self):
         return None
@@ -173,6 +180,12 @@ def run(binary, seconds):
             time.sleep(0.05)
         time.sleep(1)
         results["minimized"] = measure(root, window, "minimized", seconds)
+        window.restore()
+        until = time.monotonic() + 3
+        while window.minimized():
+            if time.monotonic() > until:
+                raise RuntimeError("window manager did not restore CorePulse")
+            time.sleep(0.05)
     finally:
         try:
             if window:
@@ -183,7 +196,7 @@ def run(binary, seconds):
             proc.wait(timeout=5)
             graceful = False
     return {"time_to_visible_ms": startup, "seconds_per_phase": seconds, "phases": results,
-            "clean_window_close": graceful}
+            "window_restored": True, "clean_window_close": graceful}
 
 
 def main():
