@@ -1,0 +1,71 @@
+name: Rust experiment
+
+on:
+  pull_request:
+    paths:
+      - rust-monitor/**
+      - .github/workflows/rust-experiment.yml
+
+permissions:
+  contents: read
+
+jobs:
+  test-and-measure:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-latest, ubuntu-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 25
+    env:
+      CARGO_TERM_COLOR: never
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.14'
+      - run: python -m pip install .
+      - working-directory: rust-monitor
+        run: cargo test
+      - working-directory: rust-monitor
+        run: cargo build --release
+      - name: Exercise CLI and measure against Python
+        shell: pwsh
+        run: |
+          $name = if ($IsWindows) { "iris-monitor-rs.exe" } else { "iris-monitor-rs" }
+          $binary = (Resolve-Path "rust-monitor/target/release/$name").Path
+          & $binary status --json
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & $binary watch --interval 0.5 --count 2
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          $pythonMonitor = (Get-Command iris-monitor).Source
+          python rust-monitor/benchmark.py --python-monitor "$pythonMonitor" --rust-monitor "$binary" --repeats 10 --watch-seconds 10 | Tee-Object -FilePath "rust-monitor/benchmark-result.json"
+          exit $LASTEXITCODE
+      - uses: actions/upload-artifact@v4
+        with:
+          name: rust-cli-${{ matrix.os }}
+          path: |
+            rust-monitor/target/release/iris-monitor-rs*
+            !rust-monitor/target/release/*.d
+            !rust-monitor/target/release/*.pdb
+            rust-monitor/Cargo.lock
+            rust-monitor/benchmark-result.json
+      - working-directory: rust-monitor
+        run: cargo build --features gui
+      - name: Open the Linux GUI on a virtual display
+        if: runner.os == 'Linux'
+        shell: bash
+        run: |
+          LIBGL_ALWAYS_SOFTWARE=1 xvfb-run -a bash -e -c '
+            rust-monitor/target/debug/iris-monitor-rs gui &
+            monitor=$!
+            trap "kill $monitor 2>/dev/null || true" EXIT
+            for _ in {1..20}; do
+              kill -0 "$monitor"
+              if xwininfo -root -tree | grep -F "Iris Xe AI Monitor"; then
+                exit 0
+              fi
+              sleep 1
+            done
+            exit 1
+          '
