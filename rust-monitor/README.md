@@ -27,6 +27,10 @@ single worker polls on demand. The desktop requests a sample every second
 while focused and every two seconds when unfocused. It pauses new samples
 and timer-driven repaints when the backend reports the window minimized.
 
+On native Linux Wayland, `--features experimental-wayland-redraw` opts in
+to unchanged pointer-follow-up suppression. The regular `gui` feature keeps
+the existing scheduler. See the [experimental flag and measurements](../docs/EXPERIMENTAL_WAYLAND_REDRAW.md).
+
 ## Sensor coverage
 
 | Reading | Windows | Linux |

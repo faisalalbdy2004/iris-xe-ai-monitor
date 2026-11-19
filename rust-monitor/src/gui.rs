@@ -103,6 +103,8 @@ impl Drop for Dashboard {
 
 pub fn run() -> eframe::Result {
     let options = eframe::NativeOptions {
+        #[cfg(feature = "experimental-wayland-redraw")]
+        experimental_wayland_redraw: true,
         vsync: std::env::var_os("COREPULSE_GUI_VSYNC").as_deref()
             != Some(std::ffi::OsStr::new("0")),
         viewport: egui::ViewportBuilder::default()

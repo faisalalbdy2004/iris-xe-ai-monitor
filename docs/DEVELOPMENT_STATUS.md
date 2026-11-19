@@ -48,6 +48,12 @@ The unchanged Windows Rust CLI measured 10.37 ms warm help startup, 388.74 ms wa
 
 On the Windows host, ten aligned samples differed by a median of 0.122 percentage points from psutil and 1.323 points from PDH Processor Time. The Intel GPU median difference was 0.000 points against a separate PDH query, with a 0.011-point maximum. Both GPU queries read WDDM busiest-engine data. Ubuntu's eight aligned psutil samples differed by 0.001 points median and 0.251 maximum.
 
+## Experimental Wayland follow-up scheduling
+
+The [opt-in flag, regression checks, and timing analysis](EXPERIMENTAL_WAYLAND_REDRAW.md)
+cover unchanged pointer follow-ups on native Linux Wayland. The existing
+scheduler remains the default.
+
 ## Limitations and next step
 
 Windows temperatures and GPU clocks, Linux GPU utilization, and AMD and NVIDIA GPU adapters remain outside verified support. Direct Task Manager access was blocked. The next milestone is to isolate presentation time and test upstream pointer-event coalescing while preserving clicks, hover, keyboard input, and resizing.

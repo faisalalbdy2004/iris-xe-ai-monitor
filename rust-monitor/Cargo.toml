@@ -8,12 +8,13 @@ description = "Experimental Rust-native Iris Xe monitor"
 [features]
 default = []
 gui = ["dep:eframe"]
+experimental-wayland-redraw = ["gui", "eframe/experimental_wayland_redraw"]
 
 [dependencies]
 clap = { version = "4.5", features = ["derive"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-eframe = { version = "0.33", optional = true, default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
+eframe = { version = "=0.33.3", optional = true, default-features = false, features = ["default_fonts", "glow", "wayland", "x11"] }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", features = ["Win32_Graphics_Dxgi", "Win32_Graphics_Dxgi_Common"] }
@@ -21,3 +22,12 @@ windows-sys = { version = "0.61", features = ["Win32_System_Performance", "Win32
 
 [dev-dependencies]
 tempfile = "3"
+
+# Pinned upstream copies carry the opt-in redraw hooks. All other crates use the registry.
+[patch.crates-io]
+eframe = { path = "vendor/eframe" }
+egui = { path = "vendor/egui" }
+
+[[test]]
+name = "wayland_pointer_redraw"
+required-features = ["experimental-wayland-redraw"]

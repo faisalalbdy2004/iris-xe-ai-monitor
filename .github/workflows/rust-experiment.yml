@@ -58,6 +58,8 @@ jobs:
       - working-directory: rust-monitor
         run: cargo test --features gui --locked --release --target-dir target/gui
       - working-directory: rust-monitor
+        run: cargo test --features experimental-wayland-redraw --locked --release --target-dir target/gui
+      - working-directory: rust-monitor
         run: cargo clippy --locked --all-targets --all-features --release --target-dir target/gui
       - working-directory: rust-monitor
         run: cargo build --features gui --locked --release --target-dir target/gui
