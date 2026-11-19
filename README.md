@@ -1,15 +1,28 @@
-# CorePulse
+<div align="center">
+  <h1>⚡ CorePulse</h1>
+  <p><strong>Know your hardware. Keep your resources.</strong></p>
+  <p>Read-only CPU, memory, battery and GPU monitoring for Windows and Linux.</p>
+  <p>
+    <a href="https://github.com/faisalalbdy2004/iris-xe-ai-monitor/actions/workflows/tests.yml?query=branch%3Afeat%2Fmonitor-v0.2.0+event%3Apull_request"><img alt="Python preview tests on feat/monitor-v0.2.0" src="https://github.com/faisalalbdy2004/iris-xe-ai-monitor/actions/workflows/tests.yml/badge.svg?branch=feat%2Fmonitor-v0.2.0&amp;event=pull_request"></a>
+    <a href="https://github.com/faisalalbdy2004/iris-xe-ai-monitor/actions/workflows/rust-experiment.yml?query=branch%3Aexperiment%2Frust-native+event%3Apull_request"><img alt="Rust experiment checks on experiment/rust-native" src="https://github.com/faisalalbdy2004/iris-xe-ai-monitor/actions/workflows/rust-experiment.yml/badge.svg?branch=experiment%2Frust-native&amp;event=pull_request"></a>
+  </p>
+  <p>
+    <a href="#development-preview">Development preview</a> ·
+    <a href="#desktop-screenshot">Screenshot</a> ·
+    <a href="#try-the-python-terminal-monitor">Quick start</a> ·
+    <a href="#roadmap">Roadmap</a> ·
+    <a href="#contributing">Contribute</a>
+  </p>
+</div>
 
-**Read-only hardware monitoring for Windows and Linux.** See CPU load, memory use, battery and AC status, and the GPU and temperature readings your system exposes. CorePulse is developed in the `iris-xe-ai-monitor` repository and aims to keep the monitor's own resource use low.
+## Development Preview
 
-[![Python preview tests](https://github.com/faisalalbdy2004/iris-xe-ai-monitor/actions/workflows/tests.yml/badge.svg?branch=feat%2Fmonitor-v0.2.0&event=pull_request)](https://github.com/faisalalbdy2004/iris-xe-ai-monitor/actions/workflows/tests.yml?query=branch%3Afeat%2Fmonitor-v0.2.0+event%3Apull_request)
-[![Rust experiment checks](https://github.com/faisalalbdy2004/iris-xe-ai-monitor/actions/workflows/rust-experiment.yml/badge.svg?branch=experiment%2Frust-native&event=pull_request)](https://github.com/faisalalbdy2004/iris-xe-ai-monitor/actions/workflows/rust-experiment.yml?query=branch%3Aexperiment%2Frust-native+event%3Apull_request)
+> [!IMPORTANT]
+> CorePulse is available as working source prototypes. The default branch is the project homepage, and there are no published GitHub Releases. The badges track pull-request checks on the Python and Rust prototype branches.
 
-[Try the terminal monitor](#try-the-python-terminal-monitor) · [Build the desktop](#build-the-experimental-rust-desktop) · [Roadmap](#roadmap) · [Contribute](#contributing)
-
-## Development status
-
-`main` contains project documentation. There are currently no published GitHub Releases. Use one of the source branches below to try a preview. The CI badges refer to the Python and Rust preview branches.
+- **Working prototypes.** Python provides text and JSON snapshots and a live terminal dashboard. Rust provides a native CLI and an experimental desktop dashboard with live charts.
+- **Performance work in progress.** Measured trials showed lower idle CPU use after changes to polling and rendering. CPU use during pointer movement remains an open issue. The opt-in Wayland redraw scheduler is being evaluated separately. [Performance measurements and test limits](https://github.com/faisalalbdy2004/iris-xe-ai-monitor/blob/experiment/rust-native/docs/DEVELOPMENT_STATUS.md)
+- **Planned.** Test and package Windows and Linux releases, expand Intel coverage beyond the initial Iris Xe focus, and implement and validate AMD and NVIDIA GPU telemetry.
 
 | Track | What you can try | Status |
 | --- | --- | --- |
@@ -18,7 +31,18 @@
 | [Rust CLI and desktop](https://github.com/faisalalbdy2004/iris-xe-ai-monitor/pull/6) | Native sampling, terminal snapshots and an optional egui dashboard with charts | Draft, based on the Python v0.2 branch |
 | [Wayland redraw experiment](https://github.com/faisalalbdy2004/iris-xe-ai-monitor/blob/review/experimental-wayland-redraw/docs/EXPERIMENTAL_WAYLAND_REDRAW.md) | Opt-in redraw scheduling for native Linux Wayland | Separate experimental branch, with an Intel/KWin smoke test |
 
-The Rust checkpoint documents sensor comparisons on a Windows 11 Iris Xe laptop and Ubuntu checks using a software-rendered virtual display. Idle overhead improved in measured trials, while CPU use during pointer movement remains an open performance issue. [Measurements, test results and limitations](https://github.com/faisalalbdy2004/iris-xe-ai-monitor/blob/experiment/rust-native/docs/DEVELOPMENT_STATUS.md)
+## Why CorePulse?
+
+- **Low overhead by design.** The Rust dashboard samples on demand, keeps a bounded chart history, and pauses timer-driven work when its window backend reports minimization.
+- **Accurate, transparent readings.** CorePulse compares its measurements with operating-system counters and reports missing readings as `unavailable` or JSON `null`.
+- **Read-only monitoring.** CorePulse leaves fan curves, power limits and firmware settings alone.
+- **Cross-hardware goals.** Windows and Linux are the target platforms. Intel Iris Xe is the initial GPU focus, with AMD and NVIDIA adapters planned.
+
+## Desktop screenshot
+
+![CorePulse's dark desktop dashboard on Linux showing live CPU history, memory usage, battery status and temperatures, with GPU utilization marked unavailable](docs/images/corepulse-rust-linux.png)
+
+*Live capture of the experimental Rust desktop on Linux, built from [commit `30a5435`](https://github.com/faisalalbdy2004/iris-xe-ai-monitor/commit/30a543507da3b83324b8f1eb00e07796fe72ebcb). The Intel GPU card shows its GT0 clock. Linux GPU utilization is currently unavailable.*
 
 ## Hardware and sensor coverage
 
@@ -28,8 +52,6 @@ The Rust checkpoint documents sensor comparisons on a Windows 11 Iris Xe laptop 
 | Intel graphics | Iris Xe is the initial testing focus. Utilization uses the busiest reported engine through WDDM when usable counters are available. | Actual Intel GPU frequency where i915 or Xe exposes it. GPU utilization is currently unavailable. |
 | Temperatures | Python v0.2 supports optional Libre Hardware Monitor readings. Rust temperatures are unavailable. | Sensors exposed through the OS, with coverage dependent on hardware and drivers. |
 | AMD and NVIDIA graphics | GPU adapters and validation are planned. | GPU adapters and validation are planned. |
-
-Missing readings appear as `unavailable` in text or `null` in JSON. CorePulse reads telemetry and leaves fan curves, power limits and firmware settings alone.
 
 ## Try the Python terminal monitor
 

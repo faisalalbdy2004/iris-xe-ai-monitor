@@ -1,6 +1,6 @@
 # Contributing to CorePulse
 
-CorePulse is an open-source, read-only hardware monitor in development for Windows and Linux. The [development status](README.md#development-status) lists the active previews and review branches.
+CorePulse is an open-source, read-only hardware monitor in development for Windows and Linux. The [development preview](README.md#development-preview) lists the active previews and review branches.
 
 ## Report a bug or propose a change
 
